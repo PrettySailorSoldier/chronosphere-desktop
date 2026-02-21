@@ -1,0 +1,14 @@
+    Checking webview2-com-sys v0.38.2
+    Checking tao v0.34.5
+    Checking tauri-winrt-notification v0.7.2
+   Compiling chronosphere-desktop v0.1.0 (W:\Sarah\Ex Nihilo\chronosphere-desktop\src-tauri)
+    Checking notify-rust v4.12.0
+    Checking webview2-com v0.38.2
+    Checking tauri-runtime v2.10.0
+    Checking wry v0.54.2
+    Checking tauri-runtime-wry v2.10.0
+    Checking tauri v2.10.2
+    Checking tauri-plugin-notification v2.3.3
+    Checking tauri-plugin-store v2.4.2
+    Checking tauri-plugin-opener v2.5.3
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 15.56s
