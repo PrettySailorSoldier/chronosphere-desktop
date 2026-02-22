@@ -83,6 +83,18 @@ export const CustomTimerForm: React.FC<Props> = ({ onStart }) => {
           <option value="birds">🐦 Birds</option>
           <option value="gong">🥁 Gong</option>
           <option value="piano">🎹 Piano</option>
+          <option value="afone">📱 Afone</option>
+          <option value="antagonist">🦹 Antagonist</option>
+          <option value="banjo">🪕 Banjo</option>
+          <option value="bassBoost">🔊 Bass Boost</option>
+          <option value="bassSoHard">🔉 Bass So Hard</option>
+          <option value="cyberpunk">🌃 Cyberpunk</option>
+          <option value="darkParadise">🌌 Dark Paradise</option>
+          <option value="morpheus">💊 Morpheus</option>
+          <option value="motivation">🔥 Motivation Trap</option>
+          <option value="viral">📈 Viral</option>
+          <option value="workComplete">✅ Work Complete</option>
+          <option value="breakComplete">☕ Break Complete</option>
           {customSounds.map((cs) => (
             <option key={cs.id} value={`custom_${cs.id}`}>🎵 {cs.name}</option>
           ))}
