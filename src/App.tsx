@@ -8,7 +8,7 @@ import { PresetButtons }    from './components/PresetButtons';
 import { CustomTimerForm }  from './components/CustomTimerForm';
 import { HistoryList }      from './components/HistoryList';
 import { StatsRibbon }      from './components/StatsRibbon';
-import { CircadianSection } from './components/CircadianSection';
+import { RightNowBlock }   from './components/RightNowBlock';
 import { SequencesSection } from './components/SequencesSection';
 import { SettingsPanel }    from './components/SettingsPanel';
 
@@ -49,7 +49,6 @@ function App() {
     await storeRef.current.set('stats',        s.stats);
     await storeRef.current.set('settings',     s.settings);
     await storeRef.current.set('sequences',    s.sequences);
-    await storeRef.current.set('userEnergy',   s.userEnergy);
     await storeRef.current.set('customSounds', s.customSounds);
     await storeRef.current.save();
   }, []);
@@ -64,10 +63,9 @@ function App() {
         const stats        = (await s.get<Stats>('stats'))                ?? { lastActiveDate: null, streak: 0, pomodoroCount: 0 };
         const settings     = (await s.get<Settings>('settings'))          ?? undefined;
         const sequences    = (await s.get<Sequence[]>('sequences'))        ?? [];
-        const userEnergy   = (await s.get<'low'|'medium'|'high'>('userEnergy')) ?? 'medium';
         const customSounds = (await s.get<CustomSound[]>('customSounds')) ?? [];
         store.hydrate({
-          history, stats, sequences, userEnergy, customSounds,
+          history, stats, sequences, customSounds,
           ...(settings ? { settings } : {}),
         });
       } catch (e) {
@@ -82,7 +80,7 @@ function App() {
   useTauriTimer(persist);
 
   // ─── Persist whenever settings / sequences / energy change ────────────────
-  useEffect(() => { if (storeReady) persist(); }, [store.settings, store.sequences, store.userEnergy, storeReady]);
+  useEffect(() => { if (storeReady) persist(); }, [store.settings, store.sequences, storeReady]);
 
   // ─── Timer creation logic ──────────────────────────────────────────────────
   const createAndStartTimer = useCallback(async (timer: Timer) => {
@@ -187,7 +185,7 @@ function App() {
       </div>
 
       {/* ── Circadian section ── */}
-      <CircadianSection onStartTask={handlePresetStart} />
+      <RightNowBlock />
 
       {/* ── Sequences ── */}
       <SequencesSection onStartTimer={(_t) => { /* timer already added by SequencesSection */ }} />

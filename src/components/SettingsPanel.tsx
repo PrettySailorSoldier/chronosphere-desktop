@@ -102,7 +102,7 @@ export const SettingsPanel: React.FC<Props> = ({ onClose }) => {
         {tab === 'presets' && (
           <div className="settings-group">
             <div className="settings-section-title">Timer Durations (minutes)</div>
-            {([['pomodoro', '🍅 Pomodoro'], ['shortBreak', '☕ Short Break'], ['longBreak', '🌙 Long Break'], ['deepWork', '🎯 Deep Work']] as const).map(([k, label]) => (
+            {([['pomodoro', '🍅 Pomodoro'], ['shortBreak', '☕ Short Break'], ['longBreak', '🌙 Long Break'], ['deepWork', '🎯 Deep Work'], ['writing', '✍️ Writing'], ['planning', '📋 Planning'], ['deep', '🦾 Deep']] as const).map(([k, label]) => (
               <div className="settings-row" key={k}>
                 <span className="settings-label">{label}</span>
                 <input

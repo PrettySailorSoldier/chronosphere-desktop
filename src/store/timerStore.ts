@@ -48,6 +48,9 @@ export interface Settings {
     shortBreak: number;
     longBreak: number;
     deepWork: number;
+    writing: number;
+    planning: number;
+    deep: number;
   };
   volume: number;
   soundEnabled: boolean;
@@ -70,7 +73,6 @@ interface TimerStore {
   sequences: Sequence[];
   activeSequence: ActiveSequence | null;
   settings: Settings;
-  userEnergy: 'low' | 'medium' | 'high';
   customSounds: CustomSound[];
   toast: string | null;
 
@@ -93,8 +95,6 @@ interface TimerStore {
   // Settings
   setSettings: (settings: Settings) => void;
 
-  // Circadian
-  setUserEnergy: (level: 'low' | 'medium' | 'high') => void;
 
   // Custom sounds
   setCustomSounds: (sounds: CustomSound[]) => void;
@@ -109,7 +109,7 @@ interface TimerStore {
 }
 
 const DEFAULT_SETTINGS: Settings = {
-  presets: { pomodoro: 25, shortBreak: 5, longBreak: 15, deepWork: 52 },
+  presets: { pomodoro: 25, shortBreak: 5, longBreak: 15, deepWork: 52, writing: 42, planning: 26, deep: 60 },
   volume: 70,
   soundEnabled: true,
   notificationsEnabled: true,
@@ -123,7 +123,6 @@ export const useTimerStore = create<TimerStore>((set, get) => ({
   sequences: [],
   activeSequence: null,
   settings: DEFAULT_SETTINGS,
-  userEnergy: 'medium',
   customSounds: [],
   toast: null,
 
@@ -175,7 +174,6 @@ export const useTimerStore = create<TimerStore>((set, get) => ({
 
   setSettings: (settings) => set({ settings }),
 
-  setUserEnergy: (level) => set({ userEnergy: level }),
 
   setCustomSounds: (sounds) => set({ customSounds: sounds }),
 
