@@ -88,7 +88,7 @@ function App() {
     await startTimerBackend(timer);
   }, []);
 
-  const handlePresetStart = useCallback(async (minutes: number, name: string) => {
+  const handlePresetStart = useCallback(async (minutes: number, name: string, soundType?: string) => {
     const now = Date.now();
     const timer: Timer = {
       id: now.toString(),
@@ -96,12 +96,12 @@ function App() {
       totalSeconds: minutes * 60,
       remainingSeconds: minutes * 60,
       endTime: now + minutes * 60 * 1000,
-      soundType: 'chime',
+      soundType: soundType || store.settings.defaultSound,
       notificationMsg: `${name} complete! ✨`,
       isRunning: true,
     };
     await createAndStartTimer(timer);
-  }, [createAndStartTimer]);
+  }, [createAndStartTimer, store.settings.defaultSound]);
 
   const handleCustomStart = useCallback(async (h: number, m: number, s: number, name: string, sound: string, msg: string) => {
     const total = h * 3600 + m * 60 + s;
@@ -129,13 +129,13 @@ function App() {
       totalSeconds,
       remainingSeconds: totalSeconds,
       endTime: now + totalSeconds * 1000,
-      soundType: 'chime',
+      soundType: store.settings.defaultSound,
       notificationMsg: `${name} complete! ✨`,
       isRunning: true,
     };
     await createAndStartTimer(timer);
     store.showToast(`Restarted: ${name}`);
-  }, [createAndStartTimer]);
+  }, [createAndStartTimer, store.settings.defaultSound]);
 
   const handlePause = useCallback(async (timer: Timer) => {
     if (timer.isRunning) {

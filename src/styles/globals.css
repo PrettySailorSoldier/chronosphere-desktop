@@ -105,6 +105,33 @@ body {
 
 /* ─── Preset Buttons ─── */
 .presets-section { margin-bottom: 14px; }
+.presets-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+.presets-sound-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--cyan-glow);
+  font-weight: 500;
+}
+.preset-sound-select {
+  background: var(--dark-card);
+  border: 1px solid var(--dark-border);
+  color: var(--pale-cyan);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  outline: none;
+}
+.preset-sound-select:focus {
+  border-color: var(--cyan-glow);
+}
 .presets-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);

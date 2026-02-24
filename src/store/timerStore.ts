@@ -56,6 +56,7 @@ export interface Settings {
   soundEnabled: boolean;
   notificationsEnabled: boolean;
   autoStartBreaks: boolean;
+  defaultSound: string;
 }
 
 export interface CustomSound {
@@ -114,6 +115,7 @@ const DEFAULT_SETTINGS: Settings = {
   soundEnabled: true,
   notificationsEnabled: true,
   autoStartBreaks: false,
+  defaultSound: 'chime',
 };
 
 export const useTimerStore = create<TimerStore>((set, get) => ({

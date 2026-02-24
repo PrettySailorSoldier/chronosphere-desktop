@@ -5,7 +5,7 @@ import { isPermissionGranted, requestPermission, sendNotification } from '@tauri
 import { useTimerStore, Timer, ActiveSequence } from '../store/timerStore';
 
 // ─── Sound playback ───────────────────────────────────────────────────────────
-const SOUND_MAP: Record<string, string> = {
+export const SOUND_MAP: Record<string, string> = {
   chime: new URL('../assets/sounds/chime.wav', import.meta.url).href,
   water: new URL('../assets/sounds/water.wav', import.meta.url).href,
   alarm: new URL('../assets/sounds/alarm.wav', import.meta.url).href,
@@ -27,7 +27,7 @@ const SOUND_MAP: Record<string, string> = {
   workComplete: new URL('../assets/sounds/work-complete.mp3', import.meta.url).href,
 };
 
-function resolveSound(soundType: string, customSounds: Array<{ id: string; data: string }>): string {
+export function resolveSound(soundType: string, customSounds: Array<{ id: string; data: string }>): string {
   if (soundType.startsWith('custom_')) {
     const id = soundType.replace('custom_', '');
     const custom = customSounds.find((s) => s.id === id);
@@ -176,7 +176,7 @@ async function handleSequenceProgress(activeSequence: ActiveSequence) {
   }
 }
 
-async function startSequenceStep(seq: ActiveSequence, settings: { presets: Record<string, number> }) {
+async function startSequenceStep(seq: ActiveSequence, settings: any) {
   const step = seq.steps[seq.currentStep];
   const presets: Record<string, number> = {
     pomodoro: settings.presets.pomodoro,
@@ -193,7 +193,7 @@ async function startSequenceStep(seq: ActiveSequence, settings: { presets: Recor
     totalSeconds: minutes * 60,
     remainingSeconds: minutes * 60,
     endTime: now + minutes * 60 * 1000,
-    soundType: 'chime',
+    soundType: settings.defaultSound ?? 'chime',
     notificationMsg: `${name} complete!`,
     isRunning: true,
     sequenceTimer: true,

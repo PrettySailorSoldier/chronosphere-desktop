@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { useTimerStore, CustomSound } from '../store/timerStore';
+import { SOUND_MAP } from '../hooks/useTauriTimer';
+import { SOUND_LABELS } from '../utils/constants';
 
 interface Props {
   onStart: (h: number, m: number, s: number, name: string, sound: string, msg: string) => void;
@@ -76,25 +78,9 @@ export const CustomTimerForm: React.FC<Props> = ({ onStart }) => {
       <div className="sound-selector">
         <label>🔊 Sound:</label>
         <select value={sound} onChange={handleSoundChange}>
-          <option value="chime">🔔 Gentle Chime</option>
-          <option value="water">💧 Running Water</option>
-          <option value="alarm">⏰ Stark Alarm</option>
-          <option value="bell">🔔 Bell</option>
-          <option value="birds">🐦 Birds</option>
-          <option value="gong">🥁 Gong</option>
-          <option value="piano">🎹 Piano</option>
-          <option value="afone">📱 Afone</option>
-          <option value="antagonist">🦹 Antagonist</option>
-          <option value="banjo">🪕 Banjo</option>
-          <option value="bassBoost">🔊 Bass Boost</option>
-          <option value="bassSoHard">🔉 Bass So Hard</option>
-          <option value="cyberpunk">🌃 Cyberpunk</option>
-          <option value="darkParadise">🌌 Dark Paradise</option>
-          <option value="morpheus">💊 Morpheus</option>
-          <option value="motivation">🔥 Motivation Trap</option>
-          <option value="viral">📈 Viral</option>
-          <option value="workComplete">✅ Work Complete</option>
-          <option value="breakComplete">☕ Break Complete</option>
+          {Object.keys(SOUND_MAP).map(k => (
+            <option key={k} value={k}>{SOUND_LABELS[k] || k}</option>
+          ))}
           {customSounds.map((cs) => (
             <option key={cs.id} value={`custom_${cs.id}`}>🎵 {cs.name}</option>
           ))}

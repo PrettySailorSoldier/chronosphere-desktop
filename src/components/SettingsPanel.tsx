@@ -1,5 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { useTimerStore, Sequence, Settings } from '../store/timerStore';
+import { SOUND_MAP, resolveSound, playSound } from '../hooks/useTauriTimer';
+import { SOUND_LABELS } from '../utils/constants';
 
 interface Props {
   onClose: () => void;
@@ -15,7 +17,7 @@ const STEP_OPTIONS = [
 ] as const;
 
 export const SettingsPanel: React.FC<Props> = ({ onClose }) => {
-  const { settings, setSettings, sequences, setSequences, history, stats, showToast } = useTimerStore();
+  const { settings, setSettings, sequences, setSequences, history, stats, customSounds, showToast } = useTimerStore();
   const [tab, setTab] = useState<Tab>('presets');
 
   // Local preset drafts
@@ -24,11 +26,14 @@ export const SettingsPanel: React.FC<Props> = ({ onClose }) => {
   const [soundEnabled, setSoundEnabled] = useState(settings.soundEnabled);
   const [notifEnabled, setNotifEnabled] = useState(settings.notificationsEnabled);
   const [autoBreaks, setAutoBreaks]   = useState(settings.autoStartBreaks);
+  const [defaultSound, setDefaultSound] = useState(settings.defaultSound);
 
   // Sequence builder
   const [seqName, setSeqName] = useState('');
   const [seqSteps, setSeqSteps] = useState<string[]>([]);
   const [seqLoop, setSeqLoop] = useState(false);
+
+  const previewTimeout = useRef<any>(null);
 
   const saveSettings = () => {
     const updated: Settings = {
@@ -37,9 +42,25 @@ export const SettingsPanel: React.FC<Props> = ({ onClose }) => {
       soundEnabled,
       notificationsEnabled: notifEnabled,
       autoStartBreaks: autoBreaks,
+      defaultSound,
     };
     setSettings(updated);
     showToast('Settings saved ✓');
+  };
+
+  const handleVolumeChange = (newVol: number) => {
+    setVolume(newVol);
+    // Play preview sound after a short debounce
+    if (previewTimeout.current) clearTimeout(previewTimeout.current);
+    previewTimeout.current = setTimeout(() => {
+      const url = resolveSound(defaultSound, customSounds);
+      playSound(url, newVol);
+    }, 150);
+  };
+
+  const sampleSound = () => {
+    const url = resolveSound(defaultSound, customSounds);
+    playSound(url, volume);
   };
 
   const toggleStep = (key: string) => {
@@ -132,15 +153,38 @@ export const SettingsPanel: React.FC<Props> = ({ onClose }) => {
               <span className="settings-label">Notifications</span>
               <button className={`settings-toggle${notifEnabled ? ' on' : ''}`} onClick={() => setNotifEnabled(!notifEnabled)} />
             </div>
+            
+            <div className="settings-section-title" style={{ marginTop: 12 }}>Audio Preferences</div>
+            
+            <div className="settings-row">
+              <span className="settings-label">Default Tone</span>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <select 
+                  className="settings-input" 
+                  style={{ width: 140 }}
+                  value={defaultSound}
+                  onChange={(e) => setDefaultSound(e.target.value)}
+                >
+                  {Object.keys(SOUND_MAP).map(k => (
+                    <option key={k} value={k}>{SOUND_LABELS[k] || k}</option>
+                  ))}
+                  {customSounds.map(cs => (
+                    <option key={cs.id} value={`custom_${cs.id}`}>🎵 {cs.name}</option>
+                  ))}
+                </select>
+                <button className="subtle-btn" onClick={sampleSound} title="Sample tone">🔊</button>
+              </div>
+            </div>
+
             <div className="settings-row">
               <span className="settings-label">Volume: {volume}%</span>
               <input
                 type="range" min={0} max={100} value={volume}
-                onChange={(e) => setVolume(parseInt(e.target.value))}
+                onChange={(e) => handleVolumeChange(parseInt(e.target.value))}
                 style={{ width: 120 }}
               />
             </div>
-            <button className="export-btn" style={{ marginTop: 8 }} onClick={saveSettings}>Save Sound</button>
+            <button className="export-btn" style={{ marginTop: 12 }} onClick={saveSettings}>Save Sound</button>
           </div>
         )}
 
@@ -175,7 +219,7 @@ export const SettingsPanel: React.FC<Props> = ({ onClose }) => {
               </div>
               {seqSteps.length > 0 && (
                 <div style={{ fontSize: 11, color: 'var(--purple-holo)' }}>
-                  Order: {seqSteps.map((s) => STEP_OPTIONS.find((o) => o.key === s)?.label).join(' → ')}
+                  Order: {seqSteps.map((s) => STEP_OPTIONS.find((o: any) => o.key === s)?.label).join(' → ')}
                 </div>
               )}
               <div className="seq-loop-row">
