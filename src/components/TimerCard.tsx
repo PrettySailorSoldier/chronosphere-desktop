@@ -1,4 +1,7 @@
-import React from 'react';
+import React, { useState } from 'react';
+import { SOUND_MAP } from '../hooks/useTauriTimer';
+import { SOUND_LABELS } from '../utils/constants';
+import { useTimerStore } from '../store/timerStore';
 
 interface Props {
   totalSeconds: number;
@@ -32,11 +35,25 @@ function formatEndTime(ts: number) {
 const RADIUS = 44;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
 
+/** Return a short human-friendly label for a soundType key */
+function soundLabel(soundType: string): string {
+  if (soundType.startsWith('custom_')) return '🎵 Custom';
+  return SOUND_LABELS[soundType] ?? soundType;
+}
+
 export const TimerCard: React.FC<Props> = ({
-  id, name, totalSeconds, remainingSeconds, isRunning, endTime, onPause, onDelete,
+  id, name, totalSeconds, remainingSeconds, isRunning, endTime, soundType, onPause, onDelete,
 }) => {
+  const { updateTimerSound, customSounds } = useTimerStore();
+  const [showSoundPicker, setShowSoundPicker] = useState(false);
+
   const progress = totalSeconds > 0 ? remainingSeconds / totalSeconds : 0;
   const dashOffset = CIRCUMFERENCE * (1 - progress);
+
+  const handleSoundChange = (newSound: string) => {
+    updateTimerSound(id, newSound);
+    setShowSoundPicker(false);
+  };
 
   return (
     <div className="timer-card">
@@ -68,6 +85,41 @@ export const TimerCard: React.FC<Props> = ({
         </svg>
         <div className="timer-display-overlay">{formatTime(remainingSeconds)}</div>
       </div>
+
+      {/* ── Sound row ── */}
+      <div className="timer-sound-row">
+        <span className="timer-sound-label">🔔 {soundLabel(soundType)}</span>
+        <button
+          className="timer-sound-change-btn"
+          onClick={() => setShowSoundPicker((v) => !v)}
+          title="Change tone for this timer"
+        >
+          {showSoundPicker ? 'Cancel' : 'Change'}
+        </button>
+      </div>
+
+      {showSoundPicker && (
+        <div className="timer-sound-picker">
+          {Object.keys(SOUND_MAP).map((k) => (
+            <button
+              key={k}
+              className={`timer-sound-option${soundType === k ? ' active' : ''}`}
+              onClick={() => handleSoundChange(k)}
+            >
+              {SOUND_LABELS[k] ?? k}
+            </button>
+          ))}
+          {customSounds.map((cs) => (
+            <button
+              key={cs.id}
+              className={`timer-sound-option${soundType === `custom_${cs.id}` ? ' active' : ''}`}
+              onClick={() => handleSoundChange(`custom_${cs.id}`)}
+            >
+              🎵 {cs.name}
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="timer-actions">
         <button onClick={onPause}>{isRunning ? '⏸ Pause' : '▶ Resume'}</button>

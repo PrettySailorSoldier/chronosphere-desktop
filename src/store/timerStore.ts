@@ -84,6 +84,7 @@ interface TimerStore {
   resumeTimer: (id: string, newEndTime: number) => void;
   tickTimer: (id: string, remaining: number) => void;
   completeTimer: (id: string) => Timer | undefined;
+  updateTimerSound: (id: string, soundType: string) => void;
 
   // History / Stats
   addHistory: (item: HistoryItem) => void;
@@ -152,6 +153,13 @@ export const useTimerStore = create<TimerStore>((set, get) => ({
     set((s) => ({
       timers: s.timers.map((t) =>
         t.id === id ? { ...t, remainingSeconds: remaining } : t
+      ),
+    })),
+
+  updateTimerSound: (id, soundType) =>
+    set((s) => ({
+      timers: s.timers.map((t) =>
+        t.id === id ? { ...t, soundType } : t
       ),
     })),
 

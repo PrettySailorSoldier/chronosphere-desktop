@@ -289,6 +289,84 @@ body {
 .delete-btn:hover { background: rgba(239,68,68,0.15) !important; border-color: #ef4444 !important; box-shadow: 0 0 12px rgba(239,68,68,0.4) !important; }
 .empty-state { text-align: center; padding: 30px 20px; color: rgba(207,245,255,0.4); font-size: 13px; }
 
+/* ── Timer sound row & picker ── */
+.timer-sound-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin: 6px 0 4px;
+  padding: 5px 8px;
+  background: rgba(0,240,255,0.05);
+  border: 1px solid rgba(0,240,255,0.12);
+  border-radius: 8px;
+}
+.timer-sound-label {
+  font-size: 10px;
+  color: var(--pale-cyan);
+  opacity: 0.8;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 68%;
+}
+.timer-sound-change-btn {
+  background: none;
+  border: 1px solid rgba(0,240,255,0.35);
+  border-radius: 5px;
+  color: var(--cyan-glow);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  padding: 2px 7px;
+  cursor: pointer;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+.timer-sound-change-btn:hover {
+  background: rgba(0,240,255,0.12);
+  box-shadow: 0 0 8px rgba(0,240,255,0.25);
+}
+
+.timer-sound-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 6px;
+  background: rgba(0,0,0,0.4);
+  border: 1px solid rgba(0,240,255,0.15);
+  border-radius: 10px;
+  margin-bottom: 6px;
+  animation: fadeInDown 0.18s ease;
+}
+@keyframes fadeInDown {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.timer-sound-option {
+  padding: 4px 9px;
+  border: 1px solid var(--dark-border);
+  border-radius: 6px;
+  background: var(--dark-card-light);
+  color: #aaa;
+  font-size: 10px;
+  cursor: pointer;
+  transition: all 0.18s;
+  white-space: nowrap;
+}
+.timer-sound-option:hover {
+  border-color: var(--cyan-glow);
+  color: var(--pale-cyan);
+  background: rgba(0,240,255,0.08);
+}
+.timer-sound-option.active {
+  border-color: var(--hot-pink);
+  color: var(--hot-pink);
+  background: rgba(255,16,240,0.1);
+  box-shadow: 0 0 8px rgba(255,16,240,0.25);
+}
+
+
 /* ─── History ─── */
 .history-section {
   margin-bottom: 14px;
