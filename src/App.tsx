@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { load } from '@tauri-apps/plugin-store';
-import { useTimerStore, Timer, Settings, Sequence, HistoryItem, Stats, CustomSound } from './store/timerStore';
+import { useTimerStore, Timer, HistoryItem, Stats, Settings, Sequence, CustomSound, DEFAULT_SETTINGS } from './store/timerStore';
 import { useTauriTimer, startTimerBackend, cancelTimerBackend } from './hooks/useTauriTimer';
 
 import { TimerCard }        from './components/TimerCard';
@@ -66,7 +66,7 @@ function App() {
         const customSounds = (await s.get<CustomSound[]>('customSounds')) ?? [];
         store.hydrate({
           history, stats, sequences, customSounds,
-          ...(settings ? { settings } : {}),
+          ...(settings ? { settings: { ...DEFAULT_SETTINGS, ...settings } } : {}),
         });
       } catch (e) {
         console.warn('Store load failed:', e);

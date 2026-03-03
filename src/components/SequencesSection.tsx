@@ -43,7 +43,7 @@ export const SequencesSection: React.FC<Props> = ({ onStartTimer }) => {
       totalSeconds: minutes * 60,
       remainingSeconds: minutes * 60,
       endTime: now + minutes * 60 * 1000,
-      soundType: 'chime',
+      soundType: settings.defaultSound ?? 'chime',
       notificationMsg: `${name} complete!`,
       isRunning: true,
       sequenceTimer: true,

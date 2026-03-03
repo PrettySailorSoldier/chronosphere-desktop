@@ -110,7 +110,7 @@ interface TimerStore {
   hydrate: (data: Partial<TimerStore>) => void;
 }
 
-const DEFAULT_SETTINGS: Settings = {
+export const DEFAULT_SETTINGS: Settings = {
   presets: { pomodoro: 25, shortBreak: 5, longBreak: 15, deepWork: 52, writing: 42, planning: 26, deep: 60 },
   volume: 70,
   soundEnabled: true,

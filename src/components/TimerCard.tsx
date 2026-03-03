@@ -35,14 +35,14 @@ function formatEndTime(ts: number) {
 const RADIUS = 44;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
 
-/** Return a short human-friendly label for a soundType key */
-function soundLabel(soundType: string): string {
+function soundLabel(soundType: string | undefined): string {
+  if (!soundType) return SOUND_LABELS.chime ?? 'Gentle Chime';
   if (soundType.startsWith('custom_')) return '🎵 Custom';
   return SOUND_LABELS[soundType] ?? soundType;
 }
 
 export const TimerCard: React.FC<Props> = ({
-  id, name, totalSeconds, remainingSeconds, isRunning, endTime, soundType, onPause, onDelete,
+  id, name, totalSeconds, remainingSeconds, isRunning, endTime, soundType = 'chime', onPause, onDelete,
 }) => {
   const { updateTimerSound, customSounds } = useTimerStore();
   const [showSoundPicker, setShowSoundPicker] = useState(false);
