@@ -8,7 +8,6 @@ interface Props {
   remainingSeconds: number;
   isRunning: boolean;
   name: string;
-  endTime: number;
   soundType: string;
   id: string;
   onPause: () => void;
@@ -23,15 +22,6 @@ function formatTime(s: number) {
   return `${m}:${String(sec).padStart(2, '0')}`;
 }
 
-function formatEndTime(ts: number) {
-  const d = new Date(ts);
-  let h = d.getHours();
-  const min = String(d.getMinutes()).padStart(2, '0');
-  const ampm = h >= 12 ? 'PM' : 'AM';
-  h = h % 12 || 12;
-  return `${h}:${min} ${ampm}`;
-}
-
 const RADIUS = 44;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
 
@@ -42,7 +32,7 @@ function soundLabel(soundType: string | undefined): string {
 }
 
 export const TimerCard: React.FC<Props> = ({
-  id, name, totalSeconds, remainingSeconds, isRunning, endTime, soundType = 'chime', onPause, onDelete,
+  id, name, totalSeconds, remainingSeconds, isRunning, soundType = 'chime', onPause, onDelete,
 }) => {
   const { updateTimerSound, customSounds } = useTimerStore();
   const [showSoundPicker, setShowSoundPicker] = useState(false);
@@ -60,7 +50,7 @@ export const TimerCard: React.FC<Props> = ({
       <div className="timer-header">
         <span className="timer-name">{name}</span>
         <span className="timer-end-time">
-          {isRunning ? `⏰ ${formatEndTime(endTime)}` : 'Paused'}
+          {isRunning ? '▶ Running' : '⏸ Paused'}
         </span>
       </div>
 

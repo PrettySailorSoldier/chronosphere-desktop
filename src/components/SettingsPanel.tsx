@@ -1,7 +1,15 @@
 import React, { useState, useRef } from 'react';
 import { useTimerStore, Sequence, Settings } from '../store/timerStore';
-import { SOUND_MAP, resolveSound, playSound } from '../hooks/useTauriTimer';
+import { SOUND_MAP } from '../hooks/useTauriTimer';
+import { resolveSound } from '../audio/soundPlayer';
 import { SOUND_LABELS } from '../utils/constants';
+
+// Play a sound directly from a resolved URL at a given volume (0-100)
+function playSound(url: string, volume: number) {
+  const audio = new Audio(url);
+  audio.volume = Math.max(0, Math.min(1, volume / 100));
+  audio.play().catch(console.warn);
+}
 
 interface Props {
   onClose: () => void;

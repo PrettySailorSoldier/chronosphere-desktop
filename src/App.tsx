@@ -1,7 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { load } from '@tauri-apps/plugin-store';
-import { useTimerStore, Timer, HistoryItem, Stats, Settings, Sequence, CustomSound, DEFAULT_SETTINGS } from './store/timerStore';
-import { useTauriTimer, startTimerBackend, cancelTimerBackend } from './hooks/useTauriTimer';
+import { useTimerStore, HistoryItem, Stats, Settings, Sequence, CustomSound, DEFAULT_SETTINGS, initTimerListeners } from './store/timerStore';
 
 import { TimerCard }        from './components/TimerCard';
 import { PresetButtons }    from './components/PresetButtons';
@@ -76,82 +75,59 @@ function App() {
     })();
   }, []);
 
-  // ─── Tauri timer event hook ────────────────────────────────────────────────
-  useTauriTimer(persist);
-
-  // ─── Persist whenever settings / sequences / energy change ────────────────
-  useEffect(() => { if (storeReady) persist(); }, [store.settings, store.sequences, storeReady]);
-
-  // ─── Timer creation logic ──────────────────────────────────────────────────
-  const createAndStartTimer = useCallback(async (timer: Timer) => {
-    store.addTimer(timer);
-    await startTimerBackend(timer);
+  // ─── Wire up Rust timer event listeners ───────────────────────────────────
+  useEffect(() => {
+    let cleanup: (() => void) | undefined;
+    initTimerListeners(persist).then((fn) => { cleanup = fn; });
+    return () => { cleanup?.(); };
   }, []);
 
+  // ─── Persist whenever settings / sequences change ─────────────────────────
+  useEffect(() => { if (storeReady) persist(); }, [store.settings, store.sequences, storeReady]);
+
+  // ─── Timer creation logic ─────────────────────────────────────────────────
   const handlePresetStart = useCallback(async (minutes: number, name: string, soundType?: string) => {
-    const now = Date.now();
-    const timer: Timer = {
-      id: now.toString(),
+    await store.startTimer({
       name,
       totalSeconds: minutes * 60,
-      remainingSeconds: minutes * 60,
-      endTime: now + minutes * 60 * 1000,
       soundType: soundType || store.settings.defaultSound,
       notificationMsg: `${name} complete! ✨`,
-      isRunning: true,
-    };
-    await createAndStartTimer(timer);
-  }, [createAndStartTimer, store.settings.defaultSound]);
+    });
+  }, [store.settings.defaultSound]);
 
   const handleCustomStart = useCallback(async (h: number, m: number, s: number, name: string, sound: string, msg: string) => {
     const total = h * 3600 + m * 60 + s;
     if (total <= 0) { store.showToast('Please set a time > 0'); return; }
     if (total > 86400) { store.showToast('Max 24h'); return; }
-    const now = Date.now();
-    const timer: Timer = {
-      id: now.toString(),
+    await store.startTimer({
       name,
       totalSeconds: total,
-      remainingSeconds: total,
-      endTime: now + total * 1000,
       soundType: sound,
       notificationMsg: msg,
-      isRunning: true,
-    };
-    await createAndStartTimer(timer);
-  }, [createAndStartTimer]);
+    });
+  }, []);
 
   const handleRevive = useCallback(async (name: string, totalSeconds: number) => {
-    const now = Date.now();
-    const timer: Timer = {
-      id: now.toString(),
+    await store.startTimer({
       name,
       totalSeconds,
-      remainingSeconds: totalSeconds,
-      endTime: now + totalSeconds * 1000,
-      soundType: store.settings.defaultSound,
       notificationMsg: `${name} complete! ✨`,
-      isRunning: true,
-    };
-    await createAndStartTimer(timer);
+    });
     store.showToast(`Restarted: ${name}`);
-  }, [createAndStartTimer, store.settings.defaultSound]);
+  }, [store.settings.defaultSound]);
 
-  const handlePause = useCallback(async (timer: Timer) => {
-    if (timer.isRunning) {
-      store.pauseTimer(timer.id);
-      await cancelTimerBackend(timer.id);
-    } else {
-      const newEnd = Date.now() + timer.remainingSeconds * 1000;
-      store.resumeTimer(timer.id, newEnd);
-      const resumed: Timer = { ...timer, isRunning: true, endTime: newEnd };
-      await startTimerBackend(resumed);
+  const handlePauseResume = useCallback(async () => {
+    const { activeTimer, pause, resume } = useTimerStore.getState();
+    if (!activeTimer) return;
+    if (activeTimer.phase === 'Running') {
+      await pause();
+    } else if (activeTimer.phase === 'Paused') {
+      await resume();
     }
   }, []);
 
-  const handleDelete = useCallback(async (id: string) => {
-    await cancelTimerBackend(id);
-    store.removeTimer(id);
+  const handleStop = useCallback(async () => {
+    await store.stop();
   }, []);
 
   // ─── Circadian header ─────────────────────────────────────────────────────
@@ -188,7 +164,7 @@ function App() {
       <RightNowBlock />
 
       {/* ── Sequences ── */}
-      <SequencesSection onStartTimer={(_t) => { /* timer already added by SequencesSection */ }} />
+      <SequencesSection />
 
       {/* ── Preset buttons ── */}
       <PresetButtons onStart={handlePresetStart} />
@@ -196,25 +172,22 @@ function App() {
       {/* ── Custom timer ── */}
       <CustomTimerForm onStart={handleCustomStart} />
 
-      {/* ── Active timers ── */}
+      {/* ── Active timer (single, engine-driven) ── */}
       <div className="timers-list">
-        {store.timers.length === 0 ? (
-          <div className="empty-state">No active timers<br />Start one above! 🌸</div>
+        {!store.activeTimer ? (
+          <div className="empty-state">No active timer<br />Start one above! 🌸</div>
         ) : (
-          store.timers.map((t) => (
-            <TimerCard
-              key={t.id}
-              id={t.id}
-              name={t.name}
-              totalSeconds={t.totalSeconds}
-              remainingSeconds={t.remainingSeconds}
-              endTime={t.endTime}
-              soundType={t.soundType}
-              isRunning={t.isRunning}
-              onPause={() => handlePause(t)}
-              onDelete={() => handleDelete(t.id)}
-            />
-          ))
+          <TimerCard
+            key={store.activeTimer.id}
+            id={store.activeTimer.id}
+            name={store.activeTimer.name}
+            totalSeconds={store.activeTimer.total_seconds}
+            remainingSeconds={store.activeTimer.remaining_seconds}
+            soundType={store.activeTimer.sound_type}
+            isRunning={store.activeTimer.phase === 'Running'}
+            onPause={handlePauseResume}
+            onDelete={handleStop}
+          />
         )}
       </div>
 

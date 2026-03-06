@@ -1,7 +1,5 @@
 import React from 'react';
 import { useTimerStore } from '../store/timerStore';
-import { startTimerBackend } from '../hooks/useTauriTimer';
-import { Timer } from '../store/timerStore';
 
 const STEP_LABELS: Record<string, string> = {
   pomodoro:   '🍅 Pomodoro',
@@ -10,77 +8,69 @@ const STEP_LABELS: Record<string, string> = {
   deepWork:   '🎯 Deep Work',
 };
 
-interface Props {
-  onStartTimer: (timer: Timer) => void;
-}
-
-export const SequencesSection: React.FC<Props> = ({ onStartTimer }) => {
-  const { sequences, activeSequence, settings, setActiveSequence, addTimer, showToast } = useTimerStore();
-
-  if (sequences.length === 0 && !activeSequence) return null;
+export const SequencesSection: React.FC = () => {
+  const {
+    sequences,
+    activeTimer,
+    isSequenceActive,
+    startSequence,
+    stop,
+    showToast,
+  } = useTimerStore();
 
   const [selectedSeqId, setSelectedSeqId] = React.useState('');
+
+  // Derive which step we're on from the active timer's sequence metadata
+  const currentStep = activeTimer?.sequence_step ?? null;
+  const totalSteps  = activeTimer?.sequence_total_steps ?? null;
+
+  // Find the active sequence definition for rendering step indicators
+  const activeSeqDef = isSequenceActive && activeTimer?.sequence_id
+    ? sequences.find((s) => s.id === activeTimer.sequence_id)
+    : null;
 
   const handleStart = async () => {
     if (!selectedSeqId) { showToast('Please select a sequence'); return; }
     const seq = sequences.find((s) => s.id === selectedSeqId);
     if (!seq) return;
 
-    const active = { ...seq, currentStep: 0 };
-    setActiveSequence(active);
     setSelectedSeqId('');
-
-    // Start first step
-    const step = seq.steps[0];
-    const presets = settings.presets as Record<string, number>;
-    const nameMap: Record<string, string> = { pomodoro: 'Pomodoro', shortBreak: 'Short Break', longBreak: 'Long Break', deepWork: 'Deep Work' };
-    const minutes = presets[step] ?? 25;
-    const name = nameMap[step] ?? step;
-    const now = Date.now();
-    const timer: Timer = {
-      id: now.toString(),
-      name,
-      totalSeconds: minutes * 60,
-      remainingSeconds: minutes * 60,
-      endTime: now + minutes * 60 * 1000,
-      soundType: settings.defaultSound ?? 'chime',
-      notificationMsg: `${name} complete!`,
-      isRunning: true,
-      sequenceTimer: true,
-    };
-    addTimer(timer);
-    await startTimerBackend(timer);
-    onStartTimer(timer);
+    await startSequence(seq);
     showToast(`▶ Started: ${seq.name}`);
   };
 
-  const handleStop = () => {
-    setActiveSequence(null);
+  const handleStop = async () => {
+    await stop();
     showToast('Sequence stopped');
   };
+
+  if (sequences.length === 0 && !isSequenceActive) return null;
 
   return (
     <div>
       {/* Active sequence progress */}
-      {activeSequence && (
+      {isSequenceActive && activeSeqDef && currentStep !== null && totalSteps !== null && (
         <div className="sequence-progress">
           <div className="sequence-progress-header">
-            <span className="sequence-progress-name">🔗 {activeSequence.name}</span>
+            <span className="sequence-progress-name">🔗 {activeSeqDef.name}</span>
+            <span className="sequence-progress-count">
+              Step {currentStep + 1} of {totalSteps}
+            </span>
             <button className="sequence-stop-btn" onClick={handleStop}>Stop</button>
           </div>
           <div className="sequence-progress-steps">
-            {activeSequence.steps.map((step, i) => {
+            {activeSeqDef.steps.map((step, i) => {
               let cls = 'sequence-step-indicator';
-              if (i < activeSequence.currentStep) cls += ' completed';
-              else if (i === activeSequence.currentStep) cls += ' current';
+              if (i < currentStep) cls += ' completed';
+              else if (i === currentStep) cls += ' current';
               return <span key={i} className={cls}>{STEP_LABELS[step] ?? step}</span>;
             })}
           </div>
         </div>
       )}
 
-      {/* Sequence selector */}
-      {sequences.length > 0 && (
+      {/* Sequence selector (only show when not in an active sequence) */}
+      {sequences.length > 0 && !isSequenceActive && (
         <div className="sequences-section">
           <div className="section-header">Flow Sequences</div>
           <div className="sequence-controls">
