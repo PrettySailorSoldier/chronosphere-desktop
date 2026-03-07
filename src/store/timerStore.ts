@@ -184,9 +184,9 @@ export const useTimerStore = create<TimerStore>((set, get) => ({
     await invoke('cmd_start_timer', {
       id: id ?? Date.now().toString(),
       name,
-      total_seconds: totalSeconds,
-      sound_type: soundType ?? settings.defaultSound,
-      notification_msg: notificationMsg ?? `${name} complete!`,
+      totalSeconds,
+      soundType: soundType ?? settings.defaultSound,
+      notificationMsg: notificationMsg ?? `${name} complete!`,
     });
   },
 
@@ -194,8 +194,8 @@ export const useTimerStore = create<TimerStore>((set, get) => ({
     const { settings } = get();
     set({ isSequenceActive: true, sequenceComplete: false });
     await invoke('cmd_start_sequence', {
-      sequence_json: JSON.stringify(sequence),
-      presets_json: JSON.stringify(settingsToEnginePresets(settings)),
+      sequenceJson: JSON.stringify(sequence),
+      presetsJson: JSON.stringify(settingsToEnginePresets(settings)),
     });
   },
 
@@ -287,7 +287,7 @@ export const useTimerStore = create<TimerStore>((set, get) => ({
     if (stillActive && timerState.sequence_id) {
       const updatedSettings = get().settings;
       invoke('cmd_next_sequence_step', {
-        presets_json: JSON.stringify(settingsToEnginePresets(updatedSettings)),
+        presetsJson: JSON.stringify(settingsToEnginePresets(updatedSettings)),
       }).catch(console.warn);
     }
 
