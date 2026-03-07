@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useTimerStore } from '../store/timerStore';
 import { getCurrentBlock } from '../utils/timeBlocks';
-import { SOUND_MAP } from '../hooks/useTauriTimer';
-import { SOUND_LABELS } from '../utils/constants';
+import { SOUND_MAP, SOUND_LABELS } from '../utils/constants';
 
 interface Props {
   onStart: (minutes: number, name: string, soundType?: string) => void;

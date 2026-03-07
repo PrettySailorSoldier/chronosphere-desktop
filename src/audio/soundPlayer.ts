@@ -1,5 +1,4 @@
-import { SOUND_MAP } from '../hooks/useTauriTimer';
-
+import { SOUND_MAP } from '../utils/constants';
 // ─── Sound playback ──────────────────────────────────────────────────────────
 
 let currentAudio: HTMLAudioElement | null = null;

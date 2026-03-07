@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
-import { SOUND_MAP } from '../hooks/useTauriTimer';
-import { SOUND_LABELS } from '../utils/constants';
+import { SOUND_MAP, SOUND_LABELS } from '../utils/constants';
 import { useTimerStore } from '../store/timerStore';
 
 interface Props {
