@@ -21,7 +21,7 @@ function formatTime(s: number) {
   return `${m}:${String(sec).padStart(2, '0')}`;
 }
 
-const RADIUS = 44;
+const RADIUS = 54;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
 
 function soundLabel(soundType: string | undefined): string {
@@ -54,7 +54,7 @@ export const TimerCard: React.FC<Props> = ({
       </div>
 
       <div className="timer-progress-wrapper">
-        <svg className="progress-ring" width="108" height="108" viewBox="0 0 108 108">
+        <svg className="progress-ring" width="128" height="128" viewBox="0 0 128 128">
           <defs>
             <linearGradient id={`grad-${id}`} x1="0%" y1="0%" x2="100%" y2="100%">
               <stop offset="0%"   stopColor="#00f0ff" />
@@ -62,10 +62,10 @@ export const TimerCard: React.FC<Props> = ({
               <stop offset="100%" stopColor="#ff10f0" />
             </linearGradient>
           </defs>
-          <circle className="progress-ring-bg" cx="54" cy="54" r={RADIUS} />
+          <circle className="progress-ring-bg" cx="64" cy="64" r={RADIUS} />
           <circle
             className="progress-ring-fill"
-            cx="54" cy="54" r={RADIUS}
+            cx="64" cy="64" r={RADIUS}
             stroke={`url(#grad-${id})`}
             strokeDasharray={CIRCUMFERENCE}
             strokeDashoffset={dashOffset}

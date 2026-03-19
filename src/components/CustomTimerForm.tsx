@@ -8,6 +8,7 @@ interface Props {
 
 export const CustomTimerForm: React.FC<Props> = ({ onStart }) => {
   const { customSounds, addCustomSound, showToast } = useTimerStore();
+  const [collapsed, setCollapsed] = useState(true);
   const [hours, setHours]   = useState('');
   const [mins, setMins]     = useState('');
   const [secs, setSecs]     = useState('');
@@ -21,6 +22,7 @@ export const CustomTimerForm: React.FC<Props> = ({ onStart }) => {
     const s = parseInt(secs) || 0;
     onStart(h, m, s, name || 'Custom Timer', sound, msg || "Time's up! ✨");
     setHours(''); setMins(''); setSecs(''); setName(''); setMsg('');
+    setCollapsed(true);
   };
 
   const handleSoundChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -55,8 +57,12 @@ export const CustomTimerForm: React.FC<Props> = ({ onStart }) => {
 
   return (
     <div className="new-timer-section">
-      <div className="section-header">Custom Timer</div>
+      <div className="custom-form-header" onClick={() => setCollapsed(!collapsed)}>
+        <div className="section-header">Custom Timer</div>
+        <button className="custom-form-toggle" tabIndex={-1}>{collapsed ? '▼ Expand' : '▲ Collapse'}</button>
+      </div>
 
+      {!collapsed && <div className="custom-form-body">
       <div className="input-group">
         <input type="number" placeholder="0" min="0" max="23" value={hours} onChange={(e) => setHours(e.target.value)} />
         <span>h</span>
@@ -106,6 +112,7 @@ export const CustomTimerForm: React.FC<Props> = ({ onStart }) => {
       </div>
 
       <button className="start-btn" onClick={handleStart}>Start Timer</button>
+      </div>}
     </div>
   );
 };

@@ -152,31 +152,19 @@ function App() {
 
       {/* ── Header ── */}
       <div className="header">
-        <h1>⚡ Chrono Sphere</h1>
-        <div className="circadian-indicator">
-          <span className="circadian-icon">{circadian.icon}</span>
-          <span className="circadian-label">{circadian.msg}</span>
+        <div className="header-top">
+          <h1>⚡ Chrono Sphere</h1>
+          <div className="circadian-indicator">
+            <span className="circadian-icon">{circadian.icon}</span>
+            <span className="circadian-label">{circadian.msg}</span>
+          </div>
         </div>
         <StatsRibbon />
       </div>
 
-      {/* ── Circadian section ── */}
-      <RightNowBlock />
-
-      {/* ── Sequences ── */}
-      <SequencesSection />
-
-      {/* ── Preset buttons ── */}
-      <PresetButtons onStart={handlePresetStart} />
-
-      {/* ── Custom timer ── */}
-      <CustomTimerForm onStart={handleCustomStart} />
-
-      {/* ── Active timer (single, engine-driven) ── */}
-      <div className="timers-list">
-        {!store.activeTimer ? (
-          <div className="empty-state">No active timer<br />Start one above! 🌸</div>
-        ) : (
+      {/* ── Active timer (prominent, at the top) ── */}
+      {store.activeTimer && (
+        <div className="timers-list">
           <TimerCard
             key={store.activeTimer.id}
             id={store.activeTimer.id}
@@ -188,8 +176,20 @@ function App() {
             onPause={handlePauseResume}
             onDelete={handleStop}
           />
-        )}
-      </div>
+        </div>
+      )}
+
+      {/* ── Sequences ── */}
+      <SequencesSection />
+
+      {/* ── Preset buttons ── */}
+      <PresetButtons onStart={handlePresetStart} />
+
+      {/* ── Custom timer ── */}
+      <CustomTimerForm onStart={handleCustomStart} />
+
+      {/* ── Circadian context (compact) ── */}
+      <RightNowBlock />
 
       {/* ── History ── */}
       <HistoryList onRevive={handleRevive} />

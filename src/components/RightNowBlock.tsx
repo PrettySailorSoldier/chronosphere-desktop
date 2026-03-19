@@ -21,17 +21,11 @@ export const RightNowBlock: React.FC = () => {
   const timeString = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
   return (
-    <div className="right-now-block">
-      <div className="block-header">
-        <span className="block-emoji">{block.emoji}</span>
-        <span className="block-name">{block.name}</span>
-      </div>
-      <div className="block-directive">
-        {block.directive}
-      </div>
-      <div className="block-time">
-        {timeString}
-      </div>
+    <div className="right-now-compact">
+      <span className="block-emoji">{block.emoji}</span>
+      <span className="block-name">{block.name}</span>
+      <span className="block-directive">{block.directive}</span>
+      <span className="block-time">{timeString}</span>
     </div>
   );
 };
