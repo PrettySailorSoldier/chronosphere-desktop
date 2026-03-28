@@ -10,6 +10,7 @@ import { StatsRibbon }      from './components/StatsRibbon';
 import { RightNowBlock }   from './components/RightNowBlock';
 import { SequencesSection } from './components/SequencesSection';
 import { SettingsPanel }    from './components/SettingsPanel';
+import { SequencerPanel }   from './components/SequencerPanel';
 
 import './styles/globals.css';
 
@@ -161,6 +162,9 @@ function App() {
         </div>
         <StatsRibbon />
       </div>
+
+      {/* ── Sequencer ── */}
+      <SequencerPanel />
 
       {/* ── Active timer (prominent, at the top) ── */}
       {store.activeTimer && (

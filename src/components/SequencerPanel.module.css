@@ -1,0 +1,407 @@
+/* SequencerPanel.module.css */
+
+.panel {
+  background: rgba(10, 5, 20, 0.7);
+  border: 1px solid rgba(180, 100, 220, 0.15);
+  border-radius: 16px;
+  padding: 16px;
+  margin-bottom: 12px;
+  backdrop-filter: blur(8px);
+}
+
+/* ── Section label ── */
+.sectionLabel {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: rgba(180, 100, 220, 0.7);
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+
+/* ── SECTION 1: Sequence Strip ── */
+.strip {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 14px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.strip::-webkit-scrollbar { height: 3px; }
+.strip::-webkit-scrollbar-track { background: transparent; }
+.strip::-webkit-scrollbar-thumb { background: rgba(180,100,220,0.3); border-radius: 2px; }
+
+.stripCapsule {
+  min-width: 36px;
+  padding: 5px 7px;
+  border-radius: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  transition: transform 0.2s ease, opacity 0.2s ease, filter 0.2s ease;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.stripCapsule.active {
+  transform: scaleY(1.07);
+  filter: brightness(1.4);
+}
+
+.stripCapsule.completed {
+  opacity: 0.3;
+}
+
+.capsuleLabel {
+  font-size: 9px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+  color: rgba(255, 255, 255, 0.85);
+  font-weight: 500;
+}
+
+.capsuleDuration {
+  font-size: 8px;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+/* ── SECTION 2: Timer Display ── */
+.timerDisplay {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 160px;
+  margin-bottom: 14px;
+}
+
+.progressRing {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%) rotate(-90deg);
+  pointer-events: none;
+}
+
+.progressRingBg {
+  fill: none;
+  stroke: rgba(180, 100, 220, 0.1);
+  stroke-width: 6;
+}
+
+.progressRingFill {
+  fill: none;
+  stroke-width: 6;
+  stroke-linecap: round;
+}
+
+.timerInner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  z-index: 1;
+}
+
+.timerDigits {
+  font-family: 'Cormorant Garamond', Georgia, serif;
+  font-size: 3.5rem;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 3px;
+  line-height: 1;
+  font-weight: 300;
+}
+
+.timerLabel {
+  font-size: 0.9rem;
+  opacity: 0.75;
+  letter-spacing: 1px;
+  text-transform: lowercase;
+}
+
+.completeText {
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.6; }
+  50%       { opacity: 1; }
+}
+
+/* ── SECTION 3: Controls ── */
+.controls {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  margin-bottom: 16px;
+}
+
+.primaryBtn {
+  padding: 10px 26px;
+  border-radius: 10px;
+  border: none;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  background: linear-gradient(135deg, #9333ea, #2563eb);
+  color: #fff;
+  transition: transform 0.2s, box-shadow 0.2s;
+  box-shadow: 0 4px 14px rgba(147, 51, 234, 0.3);
+  letter-spacing: 0.5px;
+}
+
+.primaryBtn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(147, 51, 234, 0.5);
+}
+
+.primaryBtn:active {
+  transform: translateY(0);
+}
+
+.primaryBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.secondaryBtn {
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(180, 100, 220, 0.3);
+  background: rgba(180, 100, 220, 0.07);
+  color: rgba(207, 245, 255, 0.75);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.secondaryBtn:hover {
+  border-color: rgba(180, 100, 220, 0.6);
+  background: rgba(180, 100, 220, 0.14);
+  color: rgba(207, 245, 255, 1);
+}
+
+.secondaryBtn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* ── SECTION 4/5: Editor ── */
+.editorSection {
+  border-top: 1px solid rgba(180, 100, 220, 0.12);
+  padding-top: 12px;
+}
+
+.templates {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.templatePill {
+  padding: 4px 10px;
+  border: 1px dashed rgba(180, 100, 220, 0.35);
+  border-radius: 20px;
+  background: rgba(180, 100, 220, 0.04);
+  color: rgba(207, 245, 255, 0.6);
+  font-size: 10px;
+  cursor: pointer;
+  transition: all 0.18s;
+}
+
+.templatePill:hover {
+  border-color: rgba(180, 100, 220, 0.75);
+  background: rgba(180, 100, 220, 0.12);
+  color: #fff;
+}
+
+.phaseList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 260px;
+  overflow-y: auto;
+  margin-bottom: 8px;
+  padding-right: 2px;
+}
+
+.phaseRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 7px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  transition: border-color 0.18s;
+  user-select: none;
+}
+
+.phaseRow:hover {
+  border-color: rgba(180, 100, 220, 0.22);
+}
+
+.phaseRow.dragOver {
+  border-color: rgba(147, 51, 234, 0.55);
+  background: rgba(147, 51, 234, 0.07);
+}
+
+/* Drag handle */
+.dragHandle {
+  color: rgba(255, 255, 255, 0.2);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  padding: 1px;
+  cursor: grab;
+  transition: color 0.15s;
+}
+
+.dragHandle:hover { color: rgba(255, 255, 255, 0.5); }
+.dragHandle:active { cursor: grabbing; }
+
+.dragHandle.disabledHandle {
+  cursor: not-allowed;
+  opacity: 0.25;
+  pointer-events: none;
+}
+
+/* Type dot */
+.typeDot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  cursor: pointer;
+  border: none;
+  padding: 0;
+  transition: transform 0.15s;
+  outline: none;
+}
+
+.typeDot:hover { transform: scale(1.35); }
+
+/* Label input */
+.labelInput {
+  flex: 1;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  color: rgba(207, 245, 255, 0.85);
+  font-size: 12px;
+  padding: 3px 5px;
+  transition: border-color 0.18s;
+  min-width: 0;
+  font-family: inherit;
+}
+
+.labelInput:hover  { border-color: rgba(180, 100, 220, 0.35); }
+.labelInput:focus  { border-color: rgba(147, 51, 234, 0.55); outline: none; }
+.labelInput::placeholder { color: rgba(255, 255, 255, 0.2); }
+
+/* ±5 buttons */
+.adjBtn {
+  width: 26px;
+  height: 22px;
+  border-radius: 5px;
+  border: 1px solid rgba(180, 100, 220, 0.22);
+  background: rgba(180, 100, 220, 0.05);
+  color: rgba(207, 245, 255, 0.65);
+  font-size: 10px;
+  cursor: pointer;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: all 0.15s;
+  font-family: inherit;
+}
+
+.adjBtn:hover {
+  border-color: rgba(147, 51, 234, 0.55);
+  background: rgba(147, 51, 234, 0.13);
+  color: rgba(207, 245, 255, 1);
+}
+
+/* Duration display */
+.durationDisplay {
+  font-size: 11px;
+  font-family: monospace;
+  color: rgba(207, 245, 255, 0.55);
+  min-width: 34px;
+  text-align: center;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  transition: border-color 0.15s;
+  white-space: nowrap;
+}
+
+.durationDisplay:hover {
+  border-color: rgba(180, 100, 220, 0.35);
+  color: rgba(207, 245, 255, 0.8);
+}
+
+/* Duration inline edit input */
+.durationInput {
+  font-size: 11px;
+  font-family: monospace;
+  color: rgba(207, 245, 255, 0.9);
+  width: 46px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(147, 51, 234, 0.5);
+  border-radius: 4px;
+  padding: 2px 4px;
+  text-align: center;
+  outline: none;
+}
+
+/* Remove button */
+.removeBtn {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  border: none;
+  background: none;
+  color: rgba(239, 68, 68, 0.4);
+  font-size: 16px;
+  cursor: pointer;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: color 0.15s;
+  line-height: 1;
+}
+
+.removeBtn:hover { color: #ef4444; }
+
+/* Add phase button */
+.addPhaseBtn {
+  width: 100%;
+  padding: 7px;
+  border: 1px dashed rgba(180, 100, 220, 0.28);
+  border-radius: 8px;
+  background: none;
+  color: rgba(207, 245, 255, 0.4);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-family: inherit;
+}
+
+.addPhaseBtn:hover {
+  border-color: rgba(147, 51, 234, 0.55);
+  color: rgba(207, 245, 255, 0.75);
+  background: rgba(147, 51, 234, 0.06);
+}
