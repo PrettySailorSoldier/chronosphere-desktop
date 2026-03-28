@@ -34,6 +34,17 @@ function App() {
   const [storeReady, setStoreReady] = useState(false);
   const storeRef = useRef<Awaited<ReturnType<typeof load>> | null>(null);
 
+  // ─── Live clock for header ────────────────────────────────────────────────
+  const [headerTime, setHeaderTime] = useState('');
+  useEffect(() => {
+    const tick = () => setHeaderTime(
+      new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    );
+    tick();
+    const id = setInterval(tick, 30_000);
+    return () => clearInterval(id);
+  }, []);
+
   // Toast auto-dismiss
   useEffect(() => {
     if (!store.toast) return;
@@ -158,44 +169,53 @@ function App() {
           <div className="circadian-indicator">
             <span className="circadian-icon">{circadian.icon}</span>
             <span className="circadian-label">{circadian.msg}</span>
+            <span className="circadian-time">{headerTime}</span>
           </div>
         </div>
         <StatsRibbon />
       </div>
 
       {/* ── Sequencer ── */}
+      <div className="section-label">sequence</div>
       <SequencerPanel />
 
       {/* ── Active timer (prominent, at the top) ── */}
       {store.activeTimer && (
-        <div className="timers-list">
-          <TimerCard
-            key={store.activeTimer.id}
-            id={store.activeTimer.id}
-            name={store.activeTimer.name}
-            totalSeconds={store.activeTimer.total_seconds}
-            remainingSeconds={store.activeTimer.remaining_seconds}
-            soundType={store.activeTimer.sound_type}
-            isRunning={store.activeTimer.phase === 'Running'}
-            onPause={handlePauseResume}
-            onDelete={handleStop}
-          />
-        </div>
+        <>
+          <div className="section-label">now running</div>
+          <div className="timers-list">
+            <TimerCard
+              key={store.activeTimer.id}
+              id={store.activeTimer.id}
+              name={store.activeTimer.name}
+              totalSeconds={store.activeTimer.total_seconds}
+              remainingSeconds={store.activeTimer.remaining_seconds}
+              soundType={store.activeTimer.sound_type}
+              isRunning={store.activeTimer.phase === 'Running'}
+              onPause={handlePauseResume}
+              onDelete={handleStop}
+            />
+          </div>
+        </>
       )}
 
       {/* ── Sequences ── */}
+      <div className="section-label">saved sequences</div>
       <SequencesSection />
 
       {/* ── Preset buttons ── */}
+      <div className="section-label">quick start</div>
       <PresetButtons onStart={handlePresetStart} />
 
       {/* ── Custom timer ── */}
+      <div className="section-label">custom</div>
       <CustomTimerForm onStart={handleCustomStart} />
 
       {/* ── Circadian context (compact) ── */}
       <RightNowBlock />
 
       {/* ── History ── */}
+      <div className="section-label">history</div>
       <HistoryList onRevive={handleRevive} />
 
       {/* ── Footer ── */}

@@ -656,3 +656,24 @@ input[type="number"] { -moz-appearance: textfield; }
   color: var(--cyan-glow, #06b6d4);
   font-weight: 600;
 }
+
+/* ─── Section labels ─── */
+.section-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-muted, #94a3b8);
+  opacity: 0.5;
+  padding: 0 2px;
+  margin-bottom: -2px;
+}
+
+/* ─── Circadian time span in header ─── */
+.circadian-time {
+  font-size: 10px;
+  color: rgba(0, 240, 255, 0.6);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.03em;
+}
