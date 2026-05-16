@@ -1,14 +1,9 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useTimerStore, Sequence, Settings } from '../store/timerStore';
 import { resolveSound } from '../audio/soundPlayer';
 import { SOUND_MAP, SOUND_LABELS } from '../utils/constants';
 
-// Play a sound directly from a resolved URL at a given volume (0-100)
-function playSound(url: string, volume: number) {
-  const audio = new Audio(url);
-  audio.volume = Math.max(0, Math.min(1, volume / 100));
-  audio.play().catch(console.warn);
-}
+// Audio playback has been moved into the component to support stopping.
 
 interface Props {
   onClose: () => void;
@@ -41,6 +36,17 @@ export const SettingsPanel: React.FC<Props> = ({ onClose }) => {
   const [seqLoop, setSeqLoop] = useState(false);
 
   const previewTimeout = useRef<any>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+
+  useEffect(() => {
+    return () => {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+    };
+  }, []);
 
   const saveSettings = () => {
     const updated: Settings = {
@@ -55,19 +61,53 @@ export const SettingsPanel: React.FC<Props> = ({ onClose }) => {
     showToast('Settings saved ✓');
   };
 
+  const stopSound = () => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+      audioRef.current = null;
+    }
+    setIsPlaying(false);
+  };
+
   const handleVolumeChange = (newVol: number) => {
     setVolume(newVol);
     // Play preview sound after a short debounce
     if (previewTimeout.current) clearTimeout(previewTimeout.current);
     previewTimeout.current = setTimeout(() => {
+      stopSound();
       const url = resolveSound(defaultSound, customSounds);
-      playSound(url, newVol);
+      const audio = new Audio(url);
+      audio.volume = Math.max(0, Math.min(1, newVol / 100));
+      audio.onended = () => {
+        if (audioRef.current === audio) {
+          setIsPlaying(false);
+          audioRef.current = null;
+        }
+      };
+      audio.play().catch(console.warn);
+      audioRef.current = audio;
+      setIsPlaying(true);
     }, 150);
   };
 
   const sampleSound = () => {
+    if (isPlaying) {
+      stopSound();
+      return;
+    }
     const url = resolveSound(defaultSound, customSounds);
-    playSound(url, volume);
+    const audio = new Audio(url);
+    audio.volume = Math.max(0, Math.min(1, volume / 100));
+    audio.onended = () => {
+      if (audioRef.current === audio) {
+        setIsPlaying(false);
+        audioRef.current = null;
+      }
+    };
+    audio.play().catch(console.warn);
+    audioRef.current = audio;
+    setIsPlaying(true);
   };
 
   const toggleStep = (key: string) => {
@@ -170,7 +210,10 @@ export const SettingsPanel: React.FC<Props> = ({ onClose }) => {
                   className="settings-input" 
                   style={{ width: 140 }}
                   value={defaultSound}
-                  onChange={(e) => setDefaultSound(e.target.value)}
+                  onChange={(e) => {
+                    setDefaultSound(e.target.value);
+                    if (isPlaying) stopSound();
+                  }}
                 >
                   {Object.keys(SOUND_MAP).map(k => (
                     <option key={k} value={k}>{SOUND_LABELS[k] || k}</option>
@@ -179,7 +222,9 @@ export const SettingsPanel: React.FC<Props> = ({ onClose }) => {
                     <option key={cs.id} value={`custom_${cs.id}`}>🎵 {cs.name}</option>
                   ))}
                 </select>
-                <button className="subtle-btn" onClick={sampleSound} title="Sample tone">🔊</button>
+                <button className="subtle-btn" onClick={sampleSound} title={isPlaying ? "Stop tone" : "Sample tone"}>
+                  {isPlaying ? "⏹️" : "🔊"}
+                </button>
               </div>
             </div>
 
