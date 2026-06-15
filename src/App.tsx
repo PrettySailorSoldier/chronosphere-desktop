@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { load } from '@tauri-apps/plugin-store';
 import { useTimerStore, HistoryItem, Stats, Settings, Sequence, CustomSound, DEFAULT_SETTINGS, initTimerListeners } from './store/timerStore';
+import { getCircadianHour } from './utils/circadian';
 
 import { TimerCard }        from './components/TimerCard';
 import { PresetButtons }    from './components/PresetButtons';
@@ -14,17 +15,6 @@ import { SequencerPanel }   from './components/SequencerPanel';
 
 import './styles/globals.css';
 
-// ─── Circadian header data ────────────────────────────────────────────────────
-const CIRCADIAN_PATTERNS: Record<number, { icon: string; msg: string }> = {
-  0:{ icon:'🌙', msg:'Late night'}, 1:{icon:'🌙', msg:'Rest recommended'}, 2:{icon:'😴', msg:'Deep rest'},
-  3:{icon:'😴', msg:'Deep rest'}, 4:{icon:'😴', msg:'Early quiet'}, 5:{icon:'🌅', msg:'Waking up'},
-  6:{icon:'🌅', msg:'Morning routine'}, 7:{icon:'⚡', msg:'Morning surge'}, 8:{icon:'⚡', msg:'Morning surge'},
-  9:{icon:'🎯', msg:'Peak focus'}, 10:{icon:'🎯', msg:'Peak focus'}, 11:{icon:'🎯', msg:'Peak focus'},
-  12:{icon:'🍽️', msg:'Lunch'}, 13:{icon:'😴', msg:'Post-lunch dip'}, 14:{icon:'😴', msg:'Post-lunch dip'},
-  15:{icon:'📈', msg:'Afternoon recovery'}, 16:{icon:'⚡', msg:'Second wind'}, 17:{icon:'⚡', msg:'Second wind'},
-  18:{icon:'🌆', msg:'Evening work'}, 19:{icon:'🌆', msg:'Evening work'}, 20:{icon:'🌙', msg:'Evening focus'},
-  21:{icon:'🌙', msg:'Winding down'}, 22:{icon:'✨', msg:'Prepare for sleep'}, 23:{icon:'✨', msg:'Prepare for sleep'},
-};
 
 const STORE_FILE = 'chronosphere.json';
 
@@ -144,7 +134,7 @@ function App() {
 
   // ─── Circadian header ─────────────────────────────────────────────────────
   const hour = new Date().getHours();
-  const circadian = CIRCADIAN_PATTERNS[hour];
+  const circadian = getCircadianHour(hour);
 
   if (!storeReady) {
     return (
@@ -168,7 +158,7 @@ function App() {
           <h1>⚡ Chrono Sphere</h1>
           <div className="circadian-indicator">
             <span className="circadian-icon">{circadian.icon}</span>
-            <span className="circadian-label">{circadian.msg}</span>
+            <span className="circadian-label">{circadian.shortMsg}</span>
             <span className="circadian-time">{headerTime}</span>
           </div>
         </div>

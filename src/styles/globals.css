@@ -677,3 +677,21 @@ input[type="number"] { -moz-appearance: textfield; }
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.03em;
 }
+
+/* ─── Right Now Block — start button ─── */
+.rnb-start-btn {
+  margin-top: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  color: var(--deep-black);
+  background: linear-gradient(135deg, var(--cyan-glow), var(--purple-holo));
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: filter 0.15s ease, opacity 0.15s ease;
+}
+.rnb-start-btn:hover:not(:disabled) { filter: brightness(1.15) drop-shadow(0 0 8px rgba(0,240,255,0.5)); }
+.rnb-start-btn:disabled { opacity: 0.4; cursor: not-allowed; }
