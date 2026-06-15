@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { load } from '@tauri-apps/plugin-store';
-import { useTimerStore, HistoryItem, Stats, Settings, Sequence, CustomSound, DEFAULT_SETTINGS, initTimerListeners } from './store/timerStore';
+import { useTimerStore, HistoryItem, Stats, Settings, Sequence, CustomSound, DEFAULT_SETTINGS, initTimerListeners, StopwatchState, StopwatchSession } from './store/timerStore';
 import { getCircadianHour } from './utils/circadian';
 
 import { TimerCard }        from './components/TimerCard';
@@ -12,6 +12,8 @@ import { RightNowBlock }   from './components/RightNowBlock';
 import { SequencesSection } from './components/SequencesSection';
 import { SettingsPanel }    from './components/SettingsPanel';
 import { SequencerPanel }   from './components/SequencerPanel';
+import { Stopwatch }        from './components/Stopwatch';
+import { StopwatchStats }   from './components/StopwatchStats';
 
 import './styles/globals.css';
 
@@ -42,15 +44,17 @@ function App() {
     return () => clearTimeout(t);
   }, [store.toast]);
 
-  // ─── Persist to Tauri store ────────────────────────────────────────────────
+  // ─── Persist to Tauri store ──────────────────────────────────────────
   const persist = useCallback(async () => {
     if (!storeRef.current) return;
     const s = useTimerStore.getState();
-    await storeRef.current.set('history',      s.history);
-    await storeRef.current.set('stats',        s.stats);
-    await storeRef.current.set('settings',     s.settings);
-    await storeRef.current.set('sequences',    s.sequences);
-    await storeRef.current.set('customSounds', s.customSounds);
+    await storeRef.current.set('history',           s.history);
+    await storeRef.current.set('stats',             s.stats);
+    await storeRef.current.set('settings',          s.settings);
+    await storeRef.current.set('sequences',         s.sequences);
+    await storeRef.current.set('customSounds',      s.customSounds);
+    await storeRef.current.set('stopwatch',         s.stopwatch);
+    await storeRef.current.set('stopwatchSessions', s.stopwatchSessions);
     await storeRef.current.save();
   }, []);
 
@@ -65,8 +69,11 @@ function App() {
         const settings     = (await s.get<Settings>('settings'))          ?? undefined;
         const sequences    = (await s.get<Sequence[]>('sequences'))        ?? [];
         const customSounds = (await s.get<CustomSound[]>('customSounds')) ?? [];
+        const stopwatch         = (await s.get<StopwatchState | null>('stopwatch'))        ?? null;
+        const stopwatchSessions = (await s.get<StopwatchSession[]>('stopwatchSessions'))   ?? [];
         store.hydrate({
           history, stats, sequences, customSounds,
+          stopwatch, stopwatchSessions,
           ...(settings ? { settings: { ...DEFAULT_SETTINGS, ...settings } } : {}),
         });
       } catch (e) {
@@ -84,8 +91,9 @@ function App() {
     return () => { cleanup?.(); };
   }, []);
 
-  // ─── Persist whenever settings / sequences change ─────────────────────────
-  useEffect(() => { if (storeReady) persist(); }, [store.settings, store.sequences, storeReady]);
+  // ─── Persist whenever settings / sequences / stopwatch change ──────────────────
+  useEffect(() => { if (storeReady) persist(); },
+    [store.settings, store.sequences, store.stopwatch, store.stopwatchSessions, storeReady]);
 
   // ─── Timer creation logic ─────────────────────────────────────────────────
   const handlePresetStart = useCallback(async (minutes: number, name: string, soundType?: string) => {
@@ -200,6 +208,14 @@ function App() {
       {/* ── Custom timer ── */}
       <div className="section-label">custom</div>
       <CustomTimerForm onStart={handleCustomStart} />
+
+      {/* ── Stopwatch ── */}
+      <div className="section-label">stopwatch</div>
+      <Stopwatch />
+
+      {/* ── Timed Sessions ── */}
+      <div className="section-label">timed sessions</div>
+      <StopwatchStats />
 
       {/* ── Circadian context (compact) ── */}
       <RightNowBlock />
