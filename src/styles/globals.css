@@ -940,7 +940,7 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
   background: linear-gradient(135deg, #ff6b6b 0%, var(--hot-pink) 100%);
   color: #000;
   box-shadow: 0 4px 16px rgba(255, 80, 80, 0.45), 0 0 32px rgba(255, 16, 240, 0.15);
-  min-width: 120px;
+  flex: 1;
   justify-content: center;
 }
 .swp-btn--stop:hover {
@@ -969,10 +969,6 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
   box-shadow: 0 6px 26px rgba(0, 230, 138, 0.6), 0 0 40px rgba(0, 240, 255, 0.2);
 }
 
-/* When showing paired buttons, make them share available width */
-.swp-btn--stop {
-  flex: 1;
-}
 
 /* Session history */
 .swp-sessions {
