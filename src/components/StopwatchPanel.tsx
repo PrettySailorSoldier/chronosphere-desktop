@@ -47,6 +47,8 @@ const StopwatchPanel: React.FC<StopwatchPanelProps> = ({
   const stopwatch                   = useTimerStore((s) => s.stopwatch);
   const stopwatchSessions           = useTimerStore((s) => s.stopwatchSessions);
   const startStopwatch              = useTimerStore((s) => s.startStopwatch);
+  const pauseStopwatch              = useTimerStore((s) => s.pauseStopwatch);
+  const resumeStopwatch             = useTimerStore((s) => s.resumeStopwatch);
   const tickStopwatch               = useTimerStore((s) => s.tickStopwatch);
   const stopStopwatch               = useTimerStore((s) => s.stopStopwatch);
   const updateStopwatchSessionLabel = useTimerStore((s) => s.updateStopwatchSessionLabel);
@@ -112,7 +114,11 @@ const StopwatchPanel: React.FC<StopwatchPanelProps> = ({
 
       {/* ── Clock display ── */}
       <div
-        className={`swp-clock ${stopwatch.running ? 'swp-clock--running' : ''}`}
+        className={[
+          'swp-clock',
+          stopwatch.running  ? 'swp-clock--running' : '',
+          stopwatch.paused   ? 'swp-clock--paused'  : '',
+        ].filter(Boolean).join(' ')}
         aria-label="Elapsed time"
       >
         {formatElapsed(stopwatch.elapsedMs)}
@@ -120,7 +126,8 @@ const StopwatchPanel: React.FC<StopwatchPanelProps> = ({
 
       {/* ── Controls ── */}
       <div className="swp-controls">
-        {!stopwatch.running ? (
+        {/* IDLE */}
+        {!stopwatch.running && !stopwatch.paused && (
           <button
             id="swp-start-btn"
             className="swp-btn swp-btn--start"
@@ -130,16 +137,54 @@ const StopwatchPanel: React.FC<StopwatchPanelProps> = ({
             <span className="swp-btn-icon">▶</span>
             Start
           </button>
-        ) : (
-          <button
-            id="swp-stop-btn"
-            className="swp-btn swp-btn--stop"
-            onClick={handleStop}
-            aria-label="Stop stopwatch"
-          >
-            <span className="swp-btn-icon">⏹</span>
-            Stop
-          </button>
+        )}
+
+        {/* RUNNING: Pause + Stop */}
+        {stopwatch.running && (
+          <>
+            <button
+              id="swp-pause-btn"
+              className="swp-btn swp-btn--pause"
+              onClick={pauseStopwatch}
+              aria-label="Pause stopwatch"
+            >
+              <span className="swp-btn-icon">⏸</span>
+              Pause
+            </button>
+            <button
+              id="swp-stop-btn"
+              className="swp-btn swp-btn--stop"
+              onClick={handleStop}
+              aria-label="Stop and save"
+            >
+              <span className="swp-btn-icon">⏹</span>
+              Stop
+            </button>
+          </>
+        )}
+
+        {/* PAUSED: Resume + Stop */}
+        {stopwatch.paused && (
+          <>
+            <button
+              id="swp-resume-btn"
+              className="swp-btn swp-btn--resume"
+              onClick={resumeStopwatch}
+              aria-label="Resume stopwatch"
+            >
+              <span className="swp-btn-icon">▶</span>
+              Resume
+            </button>
+            <button
+              id="swp-stop-btn-paused"
+              className="swp-btn swp-btn--stop"
+              onClick={handleStop}
+              aria-label="Stop and save"
+            >
+              <span className="swp-btn-icon">⏹</span>
+              Stop
+            </button>
+          </>
         )}
       </div>
 

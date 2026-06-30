@@ -119,7 +119,14 @@ interface TimerStore {
   toast: string | null;
 
   // ── Stopwatch state ──
-  stopwatch: { running: boolean; startedAt: string | null; elapsedMs: number };
+  stopwatch: {
+    running: boolean;          // actively counting
+    paused: boolean;           // frozen mid-session
+    startedAt: string | null;        // ISO — start of the CURRENT running segment
+    sessionStartedAt: string | null; // ISO — start of the whole session (saved to record)
+    accumulatedMs: number;     // ms from segments before the current one
+    elapsedMs: number;         // live display value
+  };
   stopwatchSessions: StopwatchSession[];
 
   // ── Engine actions ──
@@ -156,6 +163,8 @@ interface TimerStore {
 
   // ── Stopwatch actions ──
   startStopwatch: () => void;
+  pauseStopwatch: () => void;
+  resumeStopwatch: () => void;
   tickStopwatch: () => void;
   stopStopwatch: (label: string) => void;
   deleteStopwatchSession: (id: string) => void;
@@ -198,7 +207,14 @@ export const useTimerStore = create<TimerStore>((set, get) => ({
   toast: null,
 
   // Stopwatch state
-  stopwatch: { running: false, startedAt: null, elapsedMs: 0 },
+  stopwatch: {
+    running: false,
+    paused: false,
+    startedAt: null,
+    sessionStartedAt: null,
+    accumulatedMs: 0,
+    elapsedMs: 0,
+  },
   stopwatchSessions: [],
 
   // ── Engine actions ──────────────────────────────────────────────────────────
@@ -371,9 +387,50 @@ export const useTimerStore = create<TimerStore>((set, get) => ({
 
   // ── Stopwatch actions ────────────────────────────────────────────────────────
 
-  startStopwatch: () =>
+  startStopwatch: () => {
+    const now = new Date().toISOString();
     set({
-      stopwatch: { running: true, startedAt: new Date().toISOString(), elapsedMs: 0 },
+      stopwatch: {
+        running: true,
+        paused: false,
+        startedAt: now,
+        sessionStartedAt: now,
+        accumulatedMs: 0,
+        elapsedMs: 0,
+      },
+    });
+  },
+
+  pauseStopwatch: () =>
+    set((s) => {
+      if (!s.stopwatch.running) return s;
+      const extra = s.stopwatch.startedAt
+        ? Date.now() - new Date(s.stopwatch.startedAt).getTime()
+        : 0;
+      const accumulated = s.stopwatch.accumulatedMs + extra;
+      return {
+        stopwatch: {
+          ...s.stopwatch,
+          running: false,
+          paused: true,
+          startedAt: null,
+          accumulatedMs: accumulated,
+          elapsedMs: accumulated,
+        },
+      };
+    }),
+
+  resumeStopwatch: () =>
+    set((s) => {
+      if (!s.stopwatch.paused) return s;
+      return {
+        stopwatch: {
+          ...s.stopwatch,
+          running: true,
+          paused: false,
+          startedAt: new Date().toISOString(),
+        },
+      };
     }),
 
   tickStopwatch: () =>
@@ -382,24 +439,35 @@ export const useTimerStore = create<TimerStore>((set, get) => ({
       return {
         stopwatch: {
           ...s.stopwatch,
-          elapsedMs: Date.now() - new Date(s.stopwatch.startedAt).getTime(),
+          elapsedMs:
+            s.stopwatch.accumulatedMs +
+            (Date.now() - new Date(s.stopwatch.startedAt).getTime()),
         },
       };
     }),
 
   stopStopwatch: (label) =>
     set((s) => {
-      if (!s.stopwatch.running || !s.stopwatch.startedAt) return s;
+      const sw = s.stopwatch;
+      // Allow stopping from either running or paused state
+      if (!sw.running && !sw.paused) return s;
       const endedAt = new Date().toISOString();
       const session: StopwatchSession = {
         id: crypto.randomUUID(),
         label,
-        startedAt: s.stopwatch.startedAt,
+        startedAt: sw.sessionStartedAt ?? sw.startedAt ?? endedAt,
         endedAt,
-        durationMs: s.stopwatch.elapsedMs,
+        durationMs: sw.elapsedMs,
       };
       return {
-        stopwatch: { running: false, startedAt: null, elapsedMs: 0 },
+        stopwatch: {
+          running: false,
+          paused: false,
+          startedAt: null,
+          sessionStartedAt: null,
+          accumulatedMs: 0,
+          elapsedMs: 0,
+        },
         stopwatchSessions: [...s.stopwatchSessions, session],
       };
     }),
