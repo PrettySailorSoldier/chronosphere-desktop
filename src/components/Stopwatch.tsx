@@ -71,7 +71,7 @@ export const Stopwatch: React.FC = () => {
       // Force-reset by starting fresh then immediately stopping without a session
       // (use store directly to bypass session push)
       useTimerStore.setState({
-        stopwatch: { running: false, startedAt: null, elapsedMs: 0 },
+        stopwatch: { running: false, paused: false, startedAt: null, sessionStartedAt: null, accumulatedMs: 0, elapsedMs: 0 },
       });
     }
   }
