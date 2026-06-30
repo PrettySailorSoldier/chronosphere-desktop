@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { load } from '@tauri-apps/plugin-store';
-import { useTimerStore, HistoryItem, Stats, Settings, Sequence, CustomSound, DEFAULT_SETTINGS, initTimerListeners, StopwatchState, StopwatchSession } from './store/timerStore';
+import { useTimerStore, HistoryItem, Stats, Settings, Sequence, CustomSound, DEFAULT_SETTINGS, initTimerListeners, StopwatchSession } from './store/timerStore';
 import { getCircadianHour } from './utils/circadian';
 
 import { TimerCard }        from './components/TimerCard';
@@ -12,8 +12,8 @@ import { RightNowBlock }   from './components/RightNowBlock';
 import { SequencesSection } from './components/SequencesSection';
 import { SettingsPanel }    from './components/SettingsPanel';
 import { SequencerPanel }   from './components/SequencerPanel';
-import { Stopwatch }        from './components/Stopwatch';
-import { StopwatchStats }   from './components/StopwatchStats';
+import StopwatchPanel       from './components/StopwatchPanel';
+import { SessionLog }       from './components/SessionLog';
 
 import './styles/globals.css';
 
@@ -24,6 +24,7 @@ function App() {
   const store = useTimerStore();
   const [showSettings, setShowSettings] = useState(false);
   const [storeReady, setStoreReady] = useState(false);
+  const [pendingLabelId, setPendingLabelId] = useState<string | null>(null);
   const storeRef = useRef<Awaited<ReturnType<typeof load>> | null>(null);
 
   // ─── Live clock for header ────────────────────────────────────────────────
@@ -53,7 +54,6 @@ function App() {
     await storeRef.current.set('settings',          s.settings);
     await storeRef.current.set('sequences',         s.sequences);
     await storeRef.current.set('customSounds',      s.customSounds);
-    await storeRef.current.set('stopwatch',         s.stopwatch);
     await storeRef.current.set('stopwatchSessions', s.stopwatchSessions);
     await storeRef.current.save();
   }, []);
@@ -64,16 +64,14 @@ function App() {
       try {
         const s = await load(STORE_FILE, { defaults: {} });
         storeRef.current = s;
-        const history      = (await s.get<HistoryItem[]>('history'))      ?? [];
-        const stats        = (await s.get<Stats>('stats'))                ?? { lastActiveDate: null, streak: 0, pomodoroCount: 0 };
-        const settings     = (await s.get<Settings>('settings'))          ?? undefined;
-        const sequences    = (await s.get<Sequence[]>('sequences'))        ?? [];
-        const customSounds = (await s.get<CustomSound[]>('customSounds')) ?? [];
-        const stopwatch         = (await s.get<StopwatchState | null>('stopwatch'))        ?? null;
-        const stopwatchSessions = (await s.get<StopwatchSession[]>('stopwatchSessions'))   ?? [];
+        const history           = (await s.get<HistoryItem[]>('history'))      ?? [];
+        const stats             = (await s.get<Stats>('stats'))                ?? { lastActiveDate: null, streak: 0, pomodoroCount: 0 };
+        const settings          = (await s.get<Settings>('settings'))          ?? undefined;
+        const sequences         = (await s.get<Sequence[]>('sequences'))       ?? [];
+        const customSounds      = (await s.get<CustomSound[]>('customSounds')) ?? [];
+        const stopwatchSessions = (await s.get<StopwatchSession[]>('stopwatchSessions')) ?? [];
         store.hydrate({
-          history, stats, sequences, customSounds,
-          stopwatch, stopwatchSessions,
+          history, stats, sequences, customSounds, stopwatchSessions,
           ...(settings ? { settings: { ...DEFAULT_SETTINGS, ...settings } } : {}),
         });
       } catch (e) {
@@ -93,7 +91,7 @@ function App() {
 
   // ─── Persist whenever settings / sequences / stopwatch change ──────────────────
   useEffect(() => { if (storeReady) persist(); },
-    [store.settings, store.sequences, store.stopwatch, store.stopwatchSessions, storeReady]);
+    [store.settings, store.sequences, store.stopwatchSessions, storeReady]);
 
   // ─── Timer creation logic ─────────────────────────────────────────────────
   const handlePresetStart = useCallback(async (minutes: number, name: string, soundType?: string) => {
@@ -173,6 +171,13 @@ function App() {
         <StatsRibbon />
       </div>
 
+      {/* ── StopwatchPanel ── */}
+      <div className="section-label">stopwatch</div>
+      <StopwatchPanel
+        pendingLabelId={pendingLabelId}
+        onPendingLabelChange={setPendingLabelId}
+      />
+
       {/* ── Sequencer ── */}
       <div className="section-label">sequence</div>
       <SequencerPanel />
@@ -209,13 +214,9 @@ function App() {
       <div className="section-label">custom</div>
       <CustomTimerForm onStart={handleCustomStart} />
 
-      {/* ── Stopwatch ── */}
-      <div className="section-label">stopwatch</div>
-      <Stopwatch />
-
-      {/* ── Timed Sessions ── */}
-      <div className="section-label">timed sessions</div>
-      <StopwatchStats />
+      {/* ── Stopwatch log ── */}
+      <div className="section-label">stopwatch log</div>
+      <SessionLog pendingLabelId={pendingLabelId} />
 
       {/* ── Circadian context (compact) ── */}
       <RightNowBlock />

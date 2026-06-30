@@ -8,20 +8,13 @@ import { playCompletionSound } from '../audio/soundPlayer';
 
 export type TimerPhase = 'Idle' | 'Running' | 'Paused' | 'Complete';
 
-/** A persisted in-progress stopwatch. Null when no stopwatch is running. */
-export interface StopwatchState {
-  label: string;        // '' if unlabeled so far
-  startTime: number;    // Date.now() at start (epoch ms)
-  // accumulated ms from previous run segments before the current segment (for pause support)
-  accumulatedMs: number;
-  isRunning: boolean;   // false = paused
-}
-
 /** A completed stopwatch session, appended to the log. */
 export interface StopwatchSession {
-  label: string;        // 'Untitled' if user left it blank
-  durationSeconds: number;
-  completedAt: number;  // epoch ms
+  id: string;
+  label: string;
+  startedAt: string;   // ISO-8601
+  endedAt: string;     // ISO-8601
+  durationMs: number;
 }
 
 /** Shape of the timer object emitted from Rust. Uses snake_case to match serde output. */
@@ -126,7 +119,7 @@ interface TimerStore {
   toast: string | null;
 
   // ── Stopwatch state ──
-  stopwatch: StopwatchState | null;
+  stopwatch: { running: boolean; startedAt: string | null; elapsedMs: number };
   stopwatchSessions: StopwatchSession[];
 
   // ── Engine actions ──
@@ -162,12 +155,12 @@ interface TimerStore {
   hydrate: (data: Partial<TimerStore>) => void;
 
   // ── Stopwatch actions ──
-  startStopwatch: (label: string) => void;
-  pauseStopwatch: () => void;
-  resumeStopwatch: () => void;
-  stopStopwatch: (finalLabel?: string) => void;
-  clearStopwatch: () => void;
-  hydrateStopwatch: (data: { stopwatch: StopwatchState | null; stopwatchSessions: StopwatchSession[] }) => void;
+  startStopwatch: () => void;
+  tickStopwatch: () => void;
+  stopStopwatch: (label: string) => void;
+  deleteStopwatchSession: (id: string) => void;
+  updateStopwatchSessionLabel: (id: string, label: string) => void;
+  clearStopwatchSessions: () => void;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -205,7 +198,7 @@ export const useTimerStore = create<TimerStore>((set, get) => ({
   toast: null,
 
   // Stopwatch state
-  stopwatch: null,
+  stopwatch: { running: false, startedAt: null, elapsedMs: 0 },
   stopwatchSessions: [],
 
   // ── Engine actions ──────────────────────────────────────────────────────────
@@ -369,55 +362,61 @@ export const useTimerStore = create<TimerStore>((set, get) => ({
   showToast: (msg) => set({ toast: msg }),
   clearToast: () => set({ toast: null }),
 
-  hydrate: (data) => set((s) => ({ ...s, ...data })),
+  hydrate: (data) =>
+    set((s) => ({
+      ...s,
+      ...data,
+      stopwatchSessions: data.stopwatchSessions ?? s.stopwatchSessions,
+    })),
 
   // ── Stopwatch actions ────────────────────────────────────────────────────────
 
-  startStopwatch: (label) =>
-    set({ stopwatch: { label, startTime: Date.now(), accumulatedMs: 0, isRunning: true } }),
+  startStopwatch: () =>
+    set({
+      stopwatch: { running: true, startedAt: new Date().toISOString(), elapsedMs: 0 },
+    }),
 
-  pauseStopwatch: () =>
+  tickStopwatch: () =>
     set((s) => {
-      if (!s.stopwatch || !s.stopwatch.isRunning) return s;
+      if (!s.stopwatch.running || !s.stopwatch.startedAt) return s;
       return {
         stopwatch: {
           ...s.stopwatch,
-          accumulatedMs: s.stopwatch.accumulatedMs + (Date.now() - s.stopwatch.startTime),
-          isRunning: false,
+          elapsedMs: Date.now() - new Date(s.stopwatch.startedAt).getTime(),
         },
       };
     }),
 
-  resumeStopwatch: () =>
+  stopStopwatch: (label) =>
     set((s) => {
-      if (!s.stopwatch || s.stopwatch.isRunning) return s;
-      return {
-        stopwatch: {
-          ...s.stopwatch,
-          startTime: Date.now(),
-          isRunning: true,
-        },
-      };
-    }),
-
-  stopStopwatch: (finalLabel?) =>
-    set((s) => {
-      if (!s.stopwatch) return s;
-      const sw = s.stopwatch;
-      const ms = sw.accumulatedMs + (sw.isRunning ? Date.now() - sw.startTime : 0);
+      if (!s.stopwatch.running || !s.stopwatch.startedAt) return s;
+      const endedAt = new Date().toISOString();
       const session: StopwatchSession = {
-        label: (finalLabel ?? sw.label).trim() || 'Untitled',
-        durationSeconds: Math.round(ms / 1000),
-        completedAt: Date.now(),
+        id: crypto.randomUUID(),
+        label,
+        startedAt: s.stopwatch.startedAt,
+        endedAt,
+        durationMs: s.stopwatch.elapsedMs,
       };
-      const sessions = [...s.stopwatchSessions, session].slice(-500);
-      return { stopwatch: null, stopwatchSessions: sessions };
+      return {
+        stopwatch: { running: false, startedAt: null, elapsedMs: 0 },
+        stopwatchSessions: [...s.stopwatchSessions, session],
+      };
     }),
 
-  clearStopwatch: () => set({ stopwatch: null }),
+  deleteStopwatchSession: (id) =>
+    set((s) => ({
+      stopwatchSessions: s.stopwatchSessions.filter((sess) => sess.id !== id),
+    })),
 
-  hydrateStopwatch: (data) =>
-    set({ stopwatch: data.stopwatch, stopwatchSessions: data.stopwatchSessions }),
+  updateStopwatchSessionLabel: (id, label) =>
+    set((s) => ({
+      stopwatchSessions: s.stopwatchSessions.map((sess) =>
+        sess.id === id ? { ...sess, label } : sess
+      ),
+    })),
+
+  clearStopwatchSessions: () => set({ stopwatchSessions: [] }),
 }));
 
 // ─── Event listener setup ─────────────────────────────────────────────────────

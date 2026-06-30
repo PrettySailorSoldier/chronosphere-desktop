@@ -3,8 +3,8 @@ import { useTimerStore, StopwatchSession } from '../store/timerStore';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function getTimeAgo(ts: number): string {
-  const diff = Date.now() - ts;
+function getTimeAgo(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
   const m = Math.round(diff / 60000);
   const h = Math.round(diff / 3600000);
   const d = Math.round(diff / 86400000);
@@ -15,7 +15,8 @@ function getTimeAgo(ts: number): string {
   return `${d} days ago`;
 }
 
-function formatDuration(s: number): string {
+function formatDuration(ms: number): string {
+  const s = Math.round(ms / 1000);
   const m = Math.floor(s / 60);
   const rem = s % 60;
   if (m >= 60) {
@@ -31,24 +32,24 @@ function formatDuration(s: number): string {
 interface LabelStat {
   label: string;
   count: number;
-  totalSeconds: number;
-  avgSeconds: number;
+  totalMs: number;
+  avgMs: number;
 }
 
 function aggregateByLabel(sessions: StopwatchSession[]): LabelStat[] {
   const map = new Map<string, { count: number; total: number }>();
   for (const s of sessions) {
     const entry = map.get(s.label) ?? { count: 0, total: 0 };
-    map.set(s.label, { count: entry.count + 1, total: entry.total + s.durationSeconds });
+    map.set(s.label, { count: entry.count + 1, total: entry.total + s.durationMs });
   }
   return Array.from(map.entries())
     .map(([label, { count, total }]) => ({
       label,
       count,
-      totalSeconds: total,
-      avgSeconds: Math.round(total / count),
+      totalMs: total,
+      avgMs: Math.round(total / count),
     }))
-    .sort((a, b) => b.totalSeconds - a.totalSeconds);
+    .sort((a, b) => b.totalMs - a.totalMs);
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -88,7 +89,7 @@ export const StopwatchStats: React.FC = () => {
                   <div key={stat.label} className="sw-stats-row">
                     <span className="sw-stats-label">{stat.label}</span>
                     <span className="sw-stats-meta">
-                      {stat.count}× &nbsp;·&nbsp; avg {formatDuration(stat.avgSeconds)} &nbsp;·&nbsp; total {formatDuration(stat.totalSeconds)}
+                      {stat.count}&times; &nbsp;·&nbsp; avg {formatDuration(stat.avgMs)} &nbsp;·&nbsp; total {formatDuration(stat.totalMs)}
                     </span>
                   </div>
                 ))}
@@ -98,17 +99,17 @@ export const StopwatchStats: React.FC = () => {
               <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', margin: '6px 0' }} />
 
               {/* ── Recent individual sessions (mirrors HistoryList rows) ── */}
-              {recentSessions.map((item: StopwatchSession, idx) => (
+              {recentSessions.map((item: StopwatchSession) => (
                 <div
-                  key={idx}
+                  key={item.id}
                   className="history-item"
                   style={{ cursor: 'default' }}
                 >
                   <div>
                     <div className="history-name">{item.label}</div>
-                    <div className="history-date">{getTimeAgo(item.completedAt)}</div>
+                    <div className="history-date">{getTimeAgo(item.endedAt)}</div>
                   </div>
-                  <div className="history-time">{formatDuration(item.durationSeconds)}</div>
+                  <div className="history-time">{formatDuration(item.durationMs)}</div>
                 </div>
               ))}
             </>

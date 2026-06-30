@@ -1,12 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { useTimerStore, StopwatchState } from '../store/timerStore';
+import { useTimerStore } from '../store/timerStore';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function elapsedMs(sw: StopwatchState | null): number {
-  if (!sw) return 0;
-  return sw.accumulatedMs + (sw.isRunning ? Date.now() - sw.startTime : 0);
-}
 
 function fmtClock(ms: number): string {
   const totalSec = Math.floor(ms / 1000);
@@ -19,50 +14,40 @@ function fmtClock(ms: number): string {
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export const Stopwatch: React.FC = () => {
-  const stopwatch         = useTimerStore((s) => s.stopwatch);
-  const startStopwatch    = useTimerStore((s) => s.startStopwatch);
-  const pauseStopwatch    = useTimerStore((s) => s.pauseStopwatch);
-  const resumeStopwatch   = useTimerStore((s) => s.resumeStopwatch);
-  const stopStopwatch     = useTimerStore((s) => s.stopStopwatch);
-  const clearStopwatch    = useTimerStore((s) => s.clearStopwatch);
+  const stopwatch          = useTimerStore((s) => s.stopwatch);
+  const startStopwatch     = useTimerStore((s) => s.startStopwatch);
+  const tickStopwatch      = useTimerStore((s) => s.tickStopwatch);
+  const stopStopwatch      = useTimerStore((s) => s.stopStopwatch);
 
-  // Local controlled input for the label
+  // Local controlled input for the session label
   const [label, setLabel] = useState('');
-  // Tick counter — only drives re-render; actual elapsed is always recomputed from startTime
-  const [, setNowTick] = useState(0);
-  // Whether we're showing the inline "label needed before save" prompt
+  // Whether we're showing the inline label-prompt before saving
   const [awaitingLabel, setAwaitingLabel] = useState(false);
 
-  // Start / stop the 1-second interval based on running state
+  // Drive 1-second ticks while the stopwatch is running
   useEffect(() => {
-    if (!stopwatch?.isRunning) return;
-    const id = setInterval(() => setNowTick((n) => n + 1), 1000);
+    if (!stopwatch.running) return;
+    const id = setInterval(() => tickStopwatch(), 1000);
     return () => clearInterval(id);
-  }, [stopwatch?.isRunning]);
+  }, [stopwatch.running]);
 
-  // Reset awaitingLabel whenever the stopwatch disappears (saved or discarded)
+  // Reset awaitingLabel when the stopwatch resets to idle
   useEffect(() => {
-    if (!stopwatch) {
+    if (!stopwatch.running && !stopwatch.startedAt) {
       setAwaitingLabel(false);
     }
-  }, [stopwatch]);
+  }, [stopwatch.running, stopwatch.startedAt]);
 
-  // ── Handlers ──────────────────────────────────────────────────────────────
+  // ── Handlers ────────────────────────────────────────────────────────────────
 
   function handleStart() {
-    startStopwatch(label.trim());
     setLabel('');
+    startStopwatch();
   }
 
   function handleStopClick() {
-    if (!stopwatch) return;
-    // If the stopwatch already has a label, save immediately
-    if (stopwatch.label.trim()) {
-      stopStopwatch();
-    } else {
-      // No label — show the inline prompt
-      setAwaitingLabel(true);
-    }
+    if (!stopwatch.running) return;
+    setAwaitingLabel(true);
   }
 
   function handleConfirmSave() {
@@ -73,30 +58,32 @@ export const Stopwatch: React.FC = () => {
 
   function handleDiscard() {
     if (window.confirm('Discard without saving?')) {
-      clearStopwatch();
-      setLabel('');
+      // Reset to idle by stopping with a discard marker (won't appear — or use a dedicated reset)
+      // Since the new slice has no clearStopwatch, we call stopStopwatch with a sentinel
+      // that the user won't see because we immediately clear it — but to avoid polluting
+      // sessions we skip saving entirely: just reset state by calling startStopwatch on a
+      // zeroed watch via a no-save path. Instead we stop and won't display the result.
+      // Actually the cleanest approach: just leave running=false, startedAt=null, elapsedMs=0
+      // by calling stopStopwatch() — but that adds a session. So we skip this and let
+      // the user cancel the label prompt without saving.
       setAwaitingLabel(false);
+      setLabel('');
+      // Force-reset by starting fresh then immediately stopping without a session
+      // (use store directly to bypass session push)
+      useTimerStore.setState({
+        stopwatch: { running: false, startedAt: null, elapsedMs: 0 },
+      });
     }
   }
 
-  // ── Render ────────────────────────────────────────────────────────────────
+  // ── Render ───────────────────────────────────────────────────────────────────
 
-  const displayMs = elapsedMs(stopwatch);
+  const displayMs = stopwatch.elapsedMs;
 
-  // ── State: no stopwatch running ───────────────────────────────────────────
-  if (!stopwatch) {
+  // ── State: idle (not running, no pending session) ────────────────────────────
+  if (!stopwatch.running && !awaitingLabel) {
     return (
       <div className="stopwatch">
-        <input
-          id="sw-label-input"
-          className="sw-input"
-          type="text"
-          value={label}
-          onChange={(e) => setLabel(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') handleStart(); }}
-          placeholder="What are you timing? (optional)"
-          maxLength={80}
-        />
         <div className="sw-actions">
           <button
             id="sw-start-btn"
@@ -110,18 +97,13 @@ export const Stopwatch: React.FC = () => {
     );
   }
 
-  // ── State: stopwatch running or paused ────────────────────────────────────
-  const currentLabel = stopwatch.label.trim() || 'Untitled';
-
+  // ── State: running or awaiting label before save ─────────────────────────────
   return (
     <div className="stopwatch">
       {/* Elapsed display */}
       <div className="sw-display">{fmtClock(displayMs)}</div>
 
-      {/* Current label */}
-      <div className="sw-label">{currentLabel}</div>
-
-      {/* Inline label-prompt when saving an unlabeled session */}
+      {/* Inline label prompt when saving */}
       {awaitingLabel && (
         <div className="sw-save-prompt">
           <input
@@ -141,41 +123,13 @@ export const Stopwatch: React.FC = () => {
       {/* Action buttons */}
       <div className="sw-actions">
         {!awaitingLabel && (
-          <>
-            {stopwatch.isRunning ? (
-              <button
-                id="sw-pause-btn"
-                className="sw-btn sw-btn--pause"
-                onClick={pauseStopwatch}
-              >
-                ⏸ Pause
-              </button>
-            ) : (
-              <button
-                id="sw-resume-btn"
-                className="sw-btn sw-btn--pause"
-                onClick={resumeStopwatch}
-              >
-                ▶ Resume
-              </button>
-            )}
-
-            <button
-              id="sw-stop-btn"
-              className="sw-btn sw-btn--stop"
-              onClick={handleStopClick}
-            >
-              ⏹ Stop &amp; Save
-            </button>
-
-            <button
-              id="sw-discard-btn"
-              className="sw-btn sw-btn--discard"
-              onClick={handleDiscard}
-            >
-              ✕ Discard
-            </button>
-          </>
+          <button
+            id="sw-stop-btn"
+            className="sw-btn sw-btn--stop"
+            onClick={handleStopClick}
+          >
+            ⏹ Stop &amp; Save
+          </button>
         )}
 
         {awaitingLabel && (
@@ -195,6 +149,16 @@ export const Stopwatch: React.FC = () => {
               Cancel
             </button>
           </>
+        )}
+
+        {!awaitingLabel && (
+          <button
+            id="sw-discard-btn"
+            className="sw-btn sw-btn--discard"
+            onClick={handleDiscard}
+          >
+            ✕ Discard
+          </button>
         )}
       </div>
     </div>
