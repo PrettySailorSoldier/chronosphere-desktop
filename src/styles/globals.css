@@ -579,7 +579,7 @@ body {
 /* Util */
 input[type="number"]::-webkit-inner-spin-button,
 input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
-input[type="number"] { -moz-appearance: textfield; }
+input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: var(--deep-black); }
 ::-webkit-scrollbar-thumb { background: var(--cyan-glow); border-radius: 8px; }
