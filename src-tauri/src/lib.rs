@@ -236,6 +236,26 @@ fn cmd_skip_timer(
     }
 }
 
+/// Add time to the running/paused timer (e.g. +1 min, +5 min)
+#[tauri::command]
+fn cmd_extend_timer(
+    app: AppHandle,
+    seconds: u32,
+    timer_state: State<SharedTimerState>,
+) {
+    let mut lock = timer_state.lock().unwrap();
+    if let Some(ref mut timer) = *lock {
+        if timer.phase == TimerPhase::Running || timer.phase == TimerPhase::Paused {
+            const MAX_SECONDS: u32 = 86_400;
+            timer.remaining_seconds = (timer.remaining_seconds + seconds).min(MAX_SECONDS);
+            timer.total_seconds = (timer.total_seconds + seconds).min(MAX_SECONDS);
+            let snapshot = timer.clone();
+            drop(lock);
+            let _ = app.emit("timer:tick", snapshot);
+        }
+    }
+}
+
 /// Stop and clear everything
 #[tauri::command]
 fn cmd_stop_timer(
@@ -276,6 +296,7 @@ pub fn run() {
             cmd_pause_timer,
             cmd_resume_timer,
             cmd_skip_timer,
+            cmd_extend_timer,
             cmd_stop_timer,
             cmd_get_timer_state,
         ])

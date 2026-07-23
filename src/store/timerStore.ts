@@ -142,6 +142,7 @@ interface TimerStore {
   resume: () => Promise<void>;
   skip: () => Promise<void>;
   stop: () => Promise<void>;
+  extendTimer: (seconds: number) => Promise<void>;
 
   // ── Event handlers (called internally by listeners) ──
   _onTick: (state: RustTimerState) => void;
@@ -157,6 +158,9 @@ interface TimerStore {
   setSettings: (settings: Settings) => void;
   setCustomSounds: (sounds: CustomSound[]) => void;
   addCustomSound: (sound: CustomSound) => void;
+  removeCustomSound: (id: string) => void;
+  renameCustomSound: (id: string, name: string) => void;
+  clearHistory: () => void;
   showToast: (msg: string) => void;
   clearToast: () => void;
   hydrate: (data: Partial<TimerStore>) => void;
@@ -256,6 +260,10 @@ export const useTimerStore = create<TimerStore>((set, get) => ({
 
   skip: async () => {
     await invoke('cmd_skip_timer');
+  },
+
+  extendTimer: async (seconds) => {
+    await invoke('cmd_extend_timer', { seconds });
   },
 
   stop: async () => {
@@ -374,6 +382,25 @@ export const useTimerStore = create<TimerStore>((set, get) => ({
 
   addCustomSound: (sound) =>
     set((s) => ({ customSounds: [...s.customSounds, sound] })),
+
+  removeCustomSound: (id) =>
+    set((s) => {
+      const customSounds = s.customSounds.filter((cs) => cs.id !== id);
+      // If the deleted tone was the default, fall back to the built-in chime
+      const settings = s.settings.defaultSound === `custom_${id}`
+        ? { ...s.settings, defaultSound: 'chime' }
+        : s.settings;
+      return { customSounds, settings };
+    }),
+
+  renameCustomSound: (id, name) =>
+    set((s) => ({
+      customSounds: s.customSounds.map((cs) =>
+        cs.id === id ? { ...cs, name } : cs
+      ),
+    })),
+
+  clearHistory: () => set({ history: [] }),
 
   showToast: (msg) => set({ toast: msg }),
   clearToast: () => set({ toast: null }),

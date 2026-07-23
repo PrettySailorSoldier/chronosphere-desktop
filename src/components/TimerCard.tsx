@@ -33,7 +33,7 @@ function soundLabel(soundType: string | undefined): string {
 export const TimerCard: React.FC<Props> = ({
   id, name, totalSeconds, remainingSeconds, isRunning, soundType = 'chime', onPause, onDelete,
 }) => {
-  const { updateTimerSound, customSounds } = useTimerStore();
+  const { updateTimerSound, customSounds, extendTimer, showToast } = useTimerStore();
   const [showSoundPicker, setShowSoundPicker] = useState(false);
 
   const progress = totalSeconds > 0 ? remainingSeconds / totalSeconds : 0;
@@ -112,6 +112,20 @@ export const TimerCard: React.FC<Props> = ({
 
       <div className="timer-actions">
         <button onClick={onPause}>{isRunning ? '⏸ Pause' : '▶ Resume'}</button>
+        <button
+          className="extend-btn"
+          title="Add 1 minute"
+          onClick={() => { extendTimer(60); showToast('+1 min'); }}
+        >
+          +1m
+        </button>
+        <button
+          className="extend-btn"
+          title="Add 5 minutes"
+          onClick={() => { extendTimer(300); showToast('+5 min'); }}
+        >
+          +5m
+        </button>
         <button className="delete-btn" onClick={onDelete}>🗑</button>
       </div>
     </div>

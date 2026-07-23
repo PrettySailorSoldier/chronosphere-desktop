@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { load } from '@tauri-apps/plugin-store';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useTimerStore, HistoryItem, Stats, Settings, Sequence, CustomSound, DEFAULT_SETTINGS, initTimerListeners, StopwatchSession } from './store/timerStore';
 import { getCircadianHour } from './utils/circadian';
 
@@ -20,11 +21,28 @@ import './styles/globals.css';
 
 const STORE_FILE = 'chronosphere.json';
 
+type View = 'timer' | 'stopwatch' | 'activity';
+
+const VIEW_TABS: Array<{ key: View; icon: string; label: string }> = [
+  { key: 'timer',     icon: '⏳', label: 'Timers'    },
+  { key: 'stopwatch', icon: '⏱', label: 'Stopwatch' },
+  { key: 'activity',  icon: '📊', label: 'Activity'  },
+];
+
+function formatClock(s: number) {
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+  return `${m}:${String(sec).padStart(2, '0')}`;
+}
+
 function App() {
   const store = useTimerStore();
   const [showSettings, setShowSettings] = useState(false);
   const [storeReady, setStoreReady] = useState(false);
   const [pendingLabelId, setPendingLabelId] = useState<string | null>(null);
+  const [view, setView] = useState<View>('timer');
   const storeRef = useRef<Awaited<ReturnType<typeof load>> | null>(null);
 
   // ─── Live clock for header ────────────────────────────────────────────────
@@ -89,9 +107,43 @@ function App() {
     return () => { cleanup?.(); };
   }, []);
 
-  // ─── Persist whenever settings / sequences / stopwatch change ──────────────────
+  // ─── Persist whenever any persisted slice changes ─────────────────────────
+  // customSounds/history/stats were previously missing here, so uploaded tones
+  // were lost on restart unless a timer happened to complete afterwards.
   useEffect(() => { if (storeReady) persist(); },
-    [store.settings, store.sequences, store.stopwatchSessions, storeReady]);
+    [store.settings, store.sequences, store.stopwatchSessions,
+     store.customSounds, store.history, store.stats, storeReady]);
+
+  // ─── Window title shows live countdown ────────────────────────────────────
+  useEffect(() => {
+    const t = store.activeTimer;
+    const title = t && t.phase !== 'Complete'
+      ? `${t.phase === 'Paused' ? '⏸' : '⏳'} ${formatClock(t.remaining_seconds)} · ${t.name}`
+      : 'Chrono Sphere';
+    getCurrentWindow().setTitle(title).catch(() => {});
+  }, [store.activeTimer?.remaining_seconds, store.activeTimer?.phase, store.activeTimer?.name]);
+
+  // ─── Keyboard shortcuts ───────────────────────────────────────────────────
+  // Space = pause/resume active timer · Esc = close settings
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      const typing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName);
+      if (e.key === 'Escape') {
+        setShowSettings(false);
+        return;
+      }
+      if (e.code === 'Space' && !typing) {
+        const { activeTimer, pause, resume } = useTimerStore.getState();
+        if (!activeTimer) return;
+        e.preventDefault();
+        if (activeTimer.phase === 'Running') pause();
+        else if (activeTimer.phase === 'Paused') resume();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   // ─── Timer creation logic ─────────────────────────────────────────────────
   const handlePresetStart = useCallback(async (minutes: number, name: string, soundType?: string) => {
@@ -162,75 +214,110 @@ function App() {
       <div className="header">
         <div className="header-top">
           <h1>⚡ Chrono Sphere</h1>
-          <div className="circadian-indicator">
-            <span className="circadian-icon">{circadian.icon}</span>
-            <span className="circadian-label">{circadian.shortMsg}</span>
-            <span className="circadian-time">{headerTime}</span>
+          <div className="header-right">
+            <div className="circadian-indicator">
+              <span className="circadian-icon">{circadian.icon}</span>
+              <span className="circadian-label">{circadian.shortMsg}</span>
+              <span className="circadian-time">{headerTime}</span>
+            </div>
+            <button
+              className="header-settings-btn"
+              title="Settings"
+              onClick={() => setShowSettings(true)}
+            >
+              ⚙️
+            </button>
           </div>
         </div>
         <StatsRibbon />
       </div>
 
-      {/* ── StopwatchPanel ── */}
-      <div className="section-label">stopwatch</div>
-      <StopwatchPanel
-        pendingLabelId={pendingLabelId}
-        onPendingLabelChange={setPendingLabelId}
-      />
+      {/* ── Main navigation ── */}
+      <div className="nav-tabs">
+        {VIEW_TABS.map((t) => (
+          <button
+            key={t.key}
+            className={`nav-tab${view === t.key ? ' active' : ''}`}
+            onClick={() => setView(t.key)}
+          >
+            <span className="nav-tab-icon">{t.icon}</span> {t.label}
+          </button>
+        ))}
+      </div>
 
-      {/* ── Sequencer ── */}
-      <div className="section-label">sequence</div>
-      <SequencerPanel />
+      {/* ── Now-running strip (visible when timer runs but user is on another tab) ── */}
+      {store.activeTimer && view !== 'timer' && (
+        <button className="running-strip" onClick={() => setView('timer')}>
+          <span className="running-strip-dot" />
+          <span className="running-strip-name">{store.activeTimer.name}</span>
+          <span className="running-strip-time">
+            {formatClock(store.activeTimer.remaining_seconds)}
+          </span>
+          <span className="running-strip-hint">view ›</span>
+        </button>
+      )}
 
-      {/* ── Active timer (prominent, at the top) ── */}
-      {store.activeTimer && (
+      {/* ══ TIMER VIEW ══ */}
+      {view === 'timer' && (
         <>
-          <div className="section-label">now running</div>
-          <div className="timers-list">
-            <TimerCard
-              key={store.activeTimer.id}
-              id={store.activeTimer.id}
-              name={store.activeTimer.name}
-              totalSeconds={store.activeTimer.total_seconds}
-              remainingSeconds={store.activeTimer.remaining_seconds}
-              soundType={store.activeTimer.sound_type}
-              isRunning={store.activeTimer.phase === 'Running'}
-              onPause={handlePauseResume}
-              onDelete={handleStop}
-            />
-          </div>
+          {/* Active timer — always at the top, most important thing on screen */}
+          {store.activeTimer && (
+            <>
+              <div className="section-label">now running</div>
+              <div className="timers-list">
+                <TimerCard
+                  key={store.activeTimer.id}
+                  id={store.activeTimer.id}
+                  name={store.activeTimer.name}
+                  totalSeconds={store.activeTimer.total_seconds}
+                  remainingSeconds={store.activeTimer.remaining_seconds}
+                  soundType={store.activeTimer.sound_type}
+                  isRunning={store.activeTimer.phase === 'Running'}
+                  onPause={handlePauseResume}
+                  onDelete={handleStop}
+                />
+              </div>
+            </>
+          )}
+
+          {/* Sequence progress / selector */}
+          <SequencesSection />
+
+          {/* Quick start — the most common action when idle */}
+          <div className="section-label">quick start</div>
+          <PresetButtons onStart={handlePresetStart} />
+
+          {/* Custom timer */}
+          <div className="section-label">custom</div>
+          <CustomTimerForm onStart={handleCustomStart} />
+
+          {/* Visual sequencer */}
+          <div className="section-label">sequencer</div>
+          <SequencerPanel />
         </>
       )}
 
-      {/* ── Sequences ── */}
-      <div className="section-label">saved sequences</div>
-      <SequencesSection />
+      {/* ══ STOPWATCH VIEW ══ */}
+      {view === 'stopwatch' && (
+        <>
+          <StopwatchPanel
+            pendingLabelId={pendingLabelId}
+            onPendingLabelChange={setPendingLabelId}
+          />
+          <div className="section-label">session log</div>
+          <SessionLog pendingLabelId={pendingLabelId} />
+        </>
+      )}
 
-      {/* ── Preset buttons ── */}
-      <div className="section-label">quick start</div>
-      <PresetButtons onStart={handlePresetStart} />
-
-      {/* ── Custom timer ── */}
-      <div className="section-label">custom</div>
-      <CustomTimerForm onStart={handleCustomStart} />
-
-      {/* ── Stopwatch log ── */}
-      <div className="section-label">stopwatch log</div>
-      <SessionLog pendingLabelId={pendingLabelId} />
-
-      {/* ── Circadian context (compact) ── */}
-      <RightNowBlock />
-
-      {/* ── History ── */}
-      <div className="section-label">history</div>
-      <HistoryList onRevive={handleRevive} />
-
-      {/* ── Footer ── */}
-      <div className="settings-link">
-        <div className="footer-buttons">
-          <button className="subtle-btn" onClick={() => setShowSettings(true)}>⚙️ Settings</button>
-        </div>
-      </div>
+      {/* ══ ACTIVITY VIEW ══ */}
+      {view === 'activity' && (
+        <>
+          <div className="section-label">right now</div>
+          <RightNowBlock />
+          <div className="section-label">history</div>
+          <HistoryList onRevive={handleRevive} />
+        </>
+      )}
     </div>
   );
 }
