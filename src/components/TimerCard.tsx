@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { SOUND_MAP, SOUND_LABELS } from '../utils/constants';
-import { useTimerStore } from '../store/timerStore';
+import { useTimerStore, TimerPhase } from '../store/timerStore';
 
 interface Props {
   totalSeconds: number;
@@ -9,7 +10,11 @@ interface Props {
   name: string;
   soundType: string;
   id: string;
+  phase: TimerPhase;
+  /** Part of a running sequence — skipping advances rather than ending everything. */
+  isSequenceStep?: boolean;
   onPause: () => void;
+  onSkip: () => void;
   onDelete: () => void;
 }
 
@@ -30,11 +35,27 @@ function soundLabel(soundType: string | undefined): string {
   return SOUND_LABELS[soundType] ?? soundType;
 }
 
+const PHASE_LABELS: Record<TimerPhase, string> = {
+  Idle:     '· Idle',
+  Running:  '▶ Running',
+  Paused:   '⏸ Paused',
+  Complete: '✓ Complete',
+};
+
 export const TimerCard: React.FC<Props> = ({
-  id, name, totalSeconds, remainingSeconds, isRunning, soundType = 'chime', onPause, onDelete,
+  id, name, totalSeconds, remainingSeconds, isRunning, soundType = 'chime',
+  phase, isSequenceStep = false, onPause, onSkip, onDelete,
 }) => {
-  const { updateTimerSound, customSounds, extendTimer, showToast } = useTimerStore();
+  const customSounds = useTimerStore((s) => s.customSounds);
+  const { updateTimerSound, extendTimer, showToast } = useTimerStore(
+    useShallow((s) => ({
+      updateTimerSound: s.updateTimerSound,
+      extendTimer: s.extendTimer,
+      showToast: s.showToast,
+    })),
+  );
   const [showSoundPicker, setShowSoundPicker] = useState(false);
+  const isDone = phase === 'Complete';
 
   const progress = totalSeconds > 0 ? remainingSeconds / totalSeconds : 0;
   const dashOffset = CIRCUMFERENCE * (1 - progress);
@@ -48,9 +69,9 @@ export const TimerCard: React.FC<Props> = ({
     <div className="timer-card">
       <div className="timer-header">
         <span className="timer-name">{name}</span>
-        <span className="timer-end-time">
-          {isRunning ? '▶ Running' : '⏸ Paused'}
-        </span>
+        {/* Reported the phase as a running/paused binary, so a finished timer
+            sat there claiming to be paused. */}
+        <span className="timer-end-time">{PHASE_LABELS[phase]}</span>
       </div>
 
       <div className="timer-progress-wrapper">
@@ -69,10 +90,12 @@ export const TimerCard: React.FC<Props> = ({
             stroke={`url(#grad-${id})`}
             strokeDasharray={CIRCUMFERENCE}
             strokeDashoffset={dashOffset}
-            style={{ transition: 'stroke-dashoffset 0.9s linear' }}
+            // Only ease between ticks while actually counting; animating a pause,
+            // a +5m or a step change makes the ring visibly lag the digits.
+            style={{ transition: isRunning ? 'stroke-dashoffset 0.9s linear' : 'none' }}
           />
         </svg>
-        <div className="timer-display-overlay">{formatTime(remainingSeconds)}</div>
+        <div className="timer-display-overlay" aria-live="off">{formatTime(remainingSeconds)}</div>
       </div>
 
       {/* ── Sound row ── */}
@@ -111,22 +134,41 @@ export const TimerCard: React.FC<Props> = ({
       )}
 
       <div className="timer-actions">
-        <button onClick={onPause}>{isRunning ? '⏸ Pause' : '▶ Resume'}</button>
-        <button
-          className="extend-btn"
-          title="Add 1 minute"
-          onClick={() => { extendTimer(60); showToast('+1 min'); }}
-        >
-          +1m
+        <button onClick={onPause} disabled={isDone} title="Pause or resume (Space)">
+          {isRunning ? '⏸ Pause' : '▶ Resume'}
         </button>
         <button
           className="extend-btn"
+          disabled={isDone}
+          title="Subtract 5 minutes"
+          onClick={() => { void extendTimer(-300); showToast('−5 min'); }}
+        >
+          −5m
+        </button>
+        <button
+          className="extend-btn"
+          disabled={isDone}
           title="Add 5 minutes"
-          onClick={() => { extendTimer(300); showToast('+5 min'); }}
+          onClick={() => { void extendTimer(300); showToast('+5 min'); }}
         >
           +5m
         </button>
-        <button className="delete-btn" onClick={onDelete}>🗑</button>
+        {/* The engine has always supported skip; nothing in the UI ever called it. */}
+        <button
+          className="extend-btn"
+          disabled={isDone}
+          title={isSequenceStep ? 'Skip to next step (S)' : 'End this timer now (S)'}
+          onClick={onSkip}
+        >
+          ⏭ Skip
+        </button>
+        <button
+          className="delete-btn"
+          title={isDone ? 'Dismiss' : isSequenceStep ? 'Stop the whole sequence' : 'Stop timer'}
+          onClick={onDelete}
+        >
+          {isDone ? '✓' : '🗑'}
+        </button>
       </div>
     </div>
   );

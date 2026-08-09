@@ -1,5 +1,7 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 import { load } from '@tauri-apps/plugin-store';
+import { useShallow } from 'zustand/react/shallow';
+import { useTimerStore, ResolvedStep } from '../store/timerStore';
 import styles from './SequencerPanel.module.css';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -29,6 +31,16 @@ const TYPE_CYCLE: Phase['type'][] = ['work', 'break', 'transition'];
 
 const RING_R    = 62;
 const RING_CIRC = 2 * Math.PI * RING_R; // ≈ 389.6
+
+/** Stable id so the panel can recognise its own run in the shared engine. */
+const SEQUENCER_ID = 'sequencer';
+
+/** Completion tone per phase type — the panel used to transition in silence. */
+const TYPE_SOUNDS: Record<Phase['type'], string> = {
+  work:       'workComplete',
+  break:      'breakComplete',
+  transition: 'chime',
+};
 
 const TEMPLATES: Record<string, Omit<Phase, 'id'>[]> = {
   '🍅 Pomodoro': [
@@ -100,11 +112,16 @@ function parseDuration(raw: string): number | null {
   return null;
 }
 
-function findNextPhase(phases: Phase[], fromIdx: number, completed: Set<number>): number | null {
-  for (let i = fromIdx + 1; i < phases.length; i++) {
-    if (!completed.has(i)) return i;
-  }
-  return null;
+function toResolvedSteps(phases: Phase[]): ResolvedStep[] {
+  return phases.map((p, i) => {
+    const label = p.label.trim() || `Phase ${i + 1}`;
+    return {
+      label,
+      seconds: p.durationSeconds,
+      sound: TYPE_SOUNDS[p.type],
+      notification: `${label} complete!`,
+    };
+  });
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -113,12 +130,30 @@ export function SequencerPanel() {
   // ── Persisted phases ────────────────────────────────────────────────────────
   const [phases, setPhases] = useState<Phase[]>(DEFAULT_PHASES);
 
-  // ── Timer state ─────────────────────────────────────────────────────────────
-  const [activeIdx,    setActiveIdx]    = useState<number | null>(null);
-  const [secondsLeft,  setSecondsLeft]  = useState(0);
-  const [running,      setRunning]      = useState(false);
-  const [completedSet, setCompletedSet] = useState<Set<number>>(new Set());
-  const [isComplete,   setIsComplete]   = useState(false);
+  // ── Timer state — owned by the Rust engine, not this component ──────────────
+  //
+  // This panel used to run its own setInterval countdown entirely separate from
+  // the app's timer engine. That meant it drifted (interval callbacks are not a
+  // clock), advanced phases in total silence, lost everything when the window
+  // closed, and could run at the same time as a "real" timer with the two
+  // fighting over the UI. It now drives the same engine as every other timer,
+  // so it inherits wall-clock accuracy, tones, notifications and rehydration.
+  const { activeTimer, isSequenceActive, sequenceComplete } = useTimerStore(
+    useShallow((s) => ({
+      activeTimer: s.activeTimer,
+      isSequenceActive: s.isSequenceActive,
+      sequenceComplete: s.sequenceComplete,
+    })),
+  );
+
+  const isOurs      = isSequenceActive && activeTimer?.sequence_id === SEQUENCER_ID;
+  const activeIdx   = isOurs ? activeTimer?.sequence_step ?? null : null;
+  const secondsLeft = isOurs ? activeTimer?.remaining_seconds ?? 0 : 0;
+  const running     = isOurs && activeTimer?.phase === 'Running';
+  const paused      = isOurs && activeTimer?.phase === 'Paused';
+  const started     = activeIdx !== null;
+
+  const [isComplete, setIsComplete] = useState(false);
 
   // ── Editor UI state ─────────────────────────────────────────────────────────
   const [editingDurId,  setEditingDurId]  = useState<string | null>(null);
@@ -126,22 +161,32 @@ export function SequencerPanel() {
   const [dragOverIdx,   setDragOverIdx]   = useState<number | null>(null);
   const [newPhaseId,    setNewPhaseId]    = useState<string | null>(null);
 
-  // ── Refs (for use inside intervals / callbacks without stale closures) ───────
-  const storeRef         = useRef<Awaited<ReturnType<typeof load>> | null>(null);
-  const mountedRef       = useRef(true);
-  const phasesRef        = useRef<Phase[]>(phases);
-  const activeIdxRef     = useRef<number | null>(null);
-  const secondsLeftRef   = useRef(0);
-  const runningRef       = useRef(false);
-  const completedSetRef  = useRef<Set<number>>(new Set());
-  const dragIdxRef       = useRef<number | null>(null);
+  // ── Refs ────────────────────────────────────────────────────────────────────
+  const storeRef     = useRef<Awaited<ReturnType<typeof load>> | null>(null);
+  const mountedRef   = useRef(true);
+  const phasesRef    = useRef<Phase[]>(phases);
+  const activeIdxRef = useRef<number | null>(null);
+  const dragIdxRef   = useRef<number | null>(null);
 
-  // Keep refs in sync with state (synchronous, before any effects)
-  phasesRef.current       = phases;
-  activeIdxRef.current    = activeIdx;
-  secondsLeftRef.current  = secondsLeft;
-  runningRef.current      = running;
-  completedSetRef.current = completedSet;
+  phasesRef.current    = phases;
+  activeIdxRef.current = activeIdx;
+
+  // Flash the "complete" state, but only when our run actually reached the end —
+  // being stopped, reset, or displaced by another timer is not a completion.
+  const wasOursRef = useRef(false);
+  useEffect(() => {
+    if (isOurs) {
+      wasOursRef.current = true;
+      setIsComplete(false);
+      return;
+    }
+    if (!wasOursRef.current) return;
+    wasOursRef.current = false;
+    if (!sequenceComplete) return;
+    setIsComplete(true);
+    const t = setTimeout(() => { if (mountedRef.current) setIsComplete(false); }, 4000);
+    return () => clearTimeout(t);
+  }, [isOurs, sequenceComplete]);
 
   // ── Load from store ONCE on mount ────────────────────────────────────────────
   useEffect(() => {
@@ -174,91 +219,47 @@ export function SequencerPanel() {
     }
   }, []);
 
-  // ── Session complete ─────────────────────────────────────────────────────────
-  const handleSessionComplete = useCallback(() => {
-    runningRef.current     = false;
-    activeIdxRef.current   = null;
-    secondsLeftRef.current = 0;
-    setRunning(false);
-    setActiveIdx(null);
-    setSecondsLeft(0);
-    setIsComplete(true);
-    setTimeout(() => {
-      if (mountedRef.current) setIsComplete(false);
-    }, 4000);
-  }, []);
+  // ── Control handlers — all delegate to the shared engine ─────────────────────
+  const handleStart = useCallback(async () => {
+    const store = useTimerStore.getState();
 
-  // ── Advance to next non-completed phase ──────────────────────────────────────
-  const advancePhase = useCallback(() => {
-    const curIdx = activeIdxRef.current;
-    if (curIdx === null) return;
-
-    const newCompleted = new Set([...completedSetRef.current, curIdx]);
-    completedSetRef.current = newCompleted;
-    setCompletedSet(new Set(newCompleted));
-
-    const nextIdx = findNextPhase(phasesRef.current, curIdx, newCompleted);
-    if (nextIdx === null) {
-      handleSessionComplete();
-    } else {
-      const dur = phasesRef.current[nextIdx].durationSeconds;
-      activeIdxRef.current   = nextIdx;
-      secondsLeftRef.current = dur;
-      setActiveIdx(nextIdx);
-      setSecondsLeft(dur);
+    // Resume rather than restart if this sequence is merely paused.
+    if (isOurs && store.activeTimer?.phase === 'Paused') {
+      await store.resume();
+      return;
     }
-  }, [handleSessionComplete]);
 
-  // ── Tick interval ─────────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (!running) return;
-    const id = setInterval(() => {
-      if (secondsLeftRef.current > 1) {
-        secondsLeftRef.current -= 1;
-        setSecondsLeft(secondsLeftRef.current);
-      } else {
-        advancePhase();
-      }
-    }, 1000);
-    return () => clearInterval(id);
-  }, [running, advancePhase]);
+    const steps = toResolvedSteps(phasesRef.current);
+    if (steps.length === 0) return;
 
-  // ── Control handlers ──────────────────────────────────────────────────────────
-  const handleStart = useCallback(() => {
-    if (activeIdxRef.current === null) {
-      const firstIdx = phasesRef.current.findIndex((_, i) => !completedSetRef.current.has(i));
-      if (firstIdx === -1) return;
-      const dur = phasesRef.current[firstIdx].durationSeconds;
-      activeIdxRef.current   = firstIdx;
-      secondsLeftRef.current = dur;
-      setActiveIdx(firstIdx);
-      setSecondsLeft(dur);
+    if (store.activeTimer && !isOurs) {
+      const label = store.activeTimer.name;
+      if (!window.confirm(`"${label}" is still running. Replace it with this sequence?`)) return;
     }
-    runningRef.current = true;
-    setRunning(true);
+
     setIsComplete(false);
-  }, []);
+    try {
+      await store.startResolvedSequence({
+        id: SEQUENCER_ID,
+        name: 'Sequencer',
+        steps,
+        loopEnabled: false,
+      });
+    } catch (e) {
+      console.warn('Sequencer start failed:', e);
+      store.showToast('Could not start the sequence');
+    }
+  }, [isOurs]);
 
-  const handlePause = useCallback(() => {
-    runningRef.current = false;
-    setRunning(false);
-  }, []);
+  const handlePause = useCallback(() => { void useTimerStore.getState().pause(); }, []);
 
-  const handleSkip = useCallback(() => {
-    advancePhase();
-  }, [advancePhase]);
+  const handleSkip = useCallback(() => { void useTimerStore.getState().skip(); }, []);
 
   const handleReset = useCallback(() => {
-    runningRef.current      = false;
-    activeIdxRef.current    = null;
-    secondsLeftRef.current  = 0;
-    completedSetRef.current = new Set();
-    setRunning(false);
-    setActiveIdx(null);
-    setSecondsLeft(0);
-    setCompletedSet(new Set());
     setIsComplete(false);
-  }, []);
+    wasOursRef.current = false;
+    if (isOurs) void useTimerStore.getState().stop();
+  }, [isOurs]);
 
   // ── Phase list mutations (all save immediately) ───────────────────────────────
   const handleLabelChange = useCallback((id: string, value: string) => {
@@ -282,12 +283,11 @@ export function SequencerPanel() {
   }, [saveToStore]);
 
   const handleAdjust = useCallback((id: string, delta: number) => {
-    // If this is the active phase, also shift secondsLeft
+    // If this is the phase in flight, push the change through to the engine so
+    // the live countdown and the editor stay in agreement.
     const idx = phasesRef.current.findIndex(p => p.id === id);
-    if (idx === activeIdxRef.current) {
-      const newLeft = Math.max(1, secondsLeftRef.current + delta);
-      secondsLeftRef.current = newLeft;
-      setSecondsLeft(newLeft);
+    if (idx !== -1 && idx === activeIdxRef.current) {
+      void useTimerStore.getState().extendTimer(delta);
     }
     setPhases(prev => {
       const next = prev.map(p => {
@@ -303,30 +303,11 @@ export function SequencerPanel() {
     const idx = phasesRef.current.findIndex(p => p.id === id);
     if (idx === -1) return;
 
+    // The engine holds an immutable copy of the steps it started with, so
+    // deleting the phase that is currently running has to end the run — there is
+    // no coherent way to keep counting down a phase the user just removed.
     if (idx === activeIdxRef.current) {
-      // Removing the active phase — stop the timer
-      runningRef.current      = false;
-      activeIdxRef.current    = null;
-      secondsLeftRef.current  = 0;
-      completedSetRef.current = new Set();
-      setRunning(false);
-      setActiveIdx(null);
-      setSecondsLeft(0);
-      setCompletedSet(new Set());
-    } else {
-      // Shift completed indices around the removed slot
-      const newCompleted = new Set<number>();
-      completedSetRef.current.forEach(i => {
-        if (i < idx) newCompleted.add(i);
-        else if (i > idx) newCompleted.add(i - 1);
-      });
-      completedSetRef.current = newCompleted;
-      setCompletedSet(new Set(newCompleted));
-      // Shift activeIdx down if needed
-      if (activeIdxRef.current !== null && idx < activeIdxRef.current) {
-        activeIdxRef.current -= 1;
-        setActiveIdx(activeIdxRef.current);
-      }
+      void useTimerStore.getState().stop();
     }
 
     setPhases(prev => {
@@ -350,15 +331,9 @@ export function SequencerPanel() {
     const template = TEMPLATES[key];
     if (!template) return;
     const newPhases = makePhases(template);
-    // Reset timer state
-    runningRef.current      = false;
-    activeIdxRef.current    = null;
-    secondsLeftRef.current  = 0;
-    completedSetRef.current = new Set();
-    setRunning(false);
-    setActiveIdx(null);
-    setSecondsLeft(0);
-    setCompletedSet(new Set());
+    // Loading a template replaces the phase list wholesale, so any run based on
+    // the old list has to end with it.
+    if (activeIdxRef.current !== null) void useTimerStore.getState().stop();
     setIsComplete(false);
     setPhases(newPhases);
     saveToStore(newPhases);
@@ -380,15 +355,8 @@ export function SequencerPanel() {
     dragIdxRef.current = null;
     if (dragIdx === null || dragIdx === dropIdx) return;
 
-    // Reset timer on reorder
-    runningRef.current      = false;
-    activeIdxRef.current    = null;
-    secondsLeftRef.current  = 0;
-    completedSetRef.current = new Set();
-    setRunning(false);
-    setActiveIdx(null);
-    setSecondsLeft(0);
-    setCompletedSet(new Set());
+    // Reordering invalidates the step indices the engine is running against.
+    if (activeIdxRef.current !== null) void useTimerStore.getState().stop();
 
     setPhases(prev => {
       const next = [...prev];
@@ -419,25 +387,30 @@ export function SequencerPanel() {
   }, [editingDurVal, saveToStore]);
 
   // ── Derived values for render ─────────────────────────────────────────────────
-  const activePhase   = activeIdx !== null ? phases[activeIdx] : null;
+  const activePhase   = activeIdx !== null ? phases[activeIdx] ?? null : null;
   const totalDuration = phases.reduce((acc, p) => acc + p.durationSeconds, 0) || 1;
 
-  const progress   = activePhase && secondsLeft > 0 ? secondsLeft / activePhase.durationSeconds : 0;
+  // Measure progress against the engine's own total for this step, so a live
+  // ±5m adjustment doesn't make the ring disagree with the digits.
+  const phaseTotal = isOurs ? activeTimer?.total_seconds ?? 0 : 0;
+  const progress   = phaseTotal > 0 ? Math.min(1, secondsLeft / phaseTotal) : 0;
   const ringOffset = RING_CIRC * (1 - progress);
   const ringColor  = activePhase ? TYPE_COLORS[activePhase.type] : 'rgba(100,60,140,0.4)';
   const timerColor = activePhase ? TIMER_COLORS[activePhase.type] : 'rgba(207,245,255,0.25)';
 
   const digitsDisplay = isComplete
     ? '00:00'
-    : activeIdx !== null
+    : started
       ? fmtTime(secondsLeft)
       : '--:--';
 
   const labelDisplay = isComplete
     ? '✦ sequence complete'
-    : activePhase
-      ? (activePhase.label || 'running')
-      : 'ready';
+    : paused
+      ? `${activePhase?.label || 'phase'} · paused`
+      : activePhase
+        ? (activePhase.label || 'running')
+        : 'ready';
 
   // ── Render ────────────────────────────────────────────────────────────────────
   return (
@@ -452,8 +425,11 @@ export function SequencerPanel() {
               key={phase.id}
               className={[
                 styles.stripCapsule,
-                i === activeIdx     ? styles.active    : '',
-                completedSet.has(i) ? styles.completed : '',
+                i === activeIdx ? styles.active : '',
+                // Steps run strictly in order, so everything before the active
+                // one is done. (Previously tracked in a parallel Set that could
+                // drift out of step with the timer.)
+                activeIdx !== null && i < activeIdx ? styles.completed : '',
               ].filter(Boolean).join(' ')}
               style={{
                 flex:        flexVal,
@@ -512,20 +488,21 @@ export function SequencerPanel() {
           onClick={running ? handlePause : handleStart}
           disabled={phases.length === 0}
         >
-          {running ? '⏸ Pause' : '▶ Start'}
+          {running ? '⏸ Pause' : paused ? '▶ Resume' : '▶ Start'}
         </button>
         <button
           className={styles.secondaryBtn}
           onClick={handleSkip}
-          disabled={activeIdx === null}
-          title="Skip to next phase"
+          disabled={!started}
+          title="Skip to next phase (S)"
         >
           ⏭ Skip
         </button>
         <button
           className={styles.secondaryBtn}
           onClick={handleReset}
-          title="Reset all"
+          disabled={!started && !isComplete}
+          title="Stop and reset"
         >
           ↺ Reset
         </button>
@@ -534,8 +511,8 @@ export function SequencerPanel() {
       {/* ── SECTION 4 + 5: Phase Editor ── */}
       <div className={styles.editorSection}>
 
-        {/* Quick-load templates (hidden while running) */}
-        {!running && (
+        {/* Quick-load templates (hidden mid-run — loading one would end it) */}
+        {!started && (
           <div className={styles.templates}>
             {Object.keys(TEMPLATES).map(key => (
               <button
@@ -551,6 +528,14 @@ export function SequencerPanel() {
 
         <div className={styles.sectionLabel}>Phases</div>
 
+        {/* The engine freezes step durations when a run starts, so say so rather
+            than letting edits look like they apply to the run in progress. */}
+        {started && (
+          <div className={styles.sectionLabel} style={{ opacity: 0.7, textTransform: 'none' }}>
+            Edits apply to the next run — except ±5 on the phase now playing.
+          </div>
+        )}
+
         {/* Phase rows */}
         <div className={styles.phaseList}>
           {phases.map((phase, i) => (
@@ -560,7 +545,7 @@ export function SequencerPanel() {
                 styles.phaseRow,
                 dragOverIdx === i ? styles.dragOver : '',
               ].filter(Boolean).join(' ')}
-              draggable={!running}
+              draggable={!started}
               onDragStart={() => handleDragStart(i)}
               onDragOver={e => handleDragOver(e, i)}
               onDrop={() => handleDrop(i)}
@@ -569,7 +554,7 @@ export function SequencerPanel() {
             >
               {/* Drag handle */}
               <span
-                className={[styles.dragHandle, running ? styles.disabledHandle : ''].filter(Boolean).join(' ')}
+                className={[styles.dragHandle, started ? styles.disabledHandle : ''].filter(Boolean).join(' ')}
                 aria-hidden="true"
               >
                 <svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor">

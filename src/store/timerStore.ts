@@ -29,6 +29,28 @@ export interface RustTimerState {
   sequence_id?: string;
   sequence_step?: number;
   sequence_total_steps?: number;
+  /** Set when the phase ended via Skip rather than by running out of time. */
+  skipped: boolean;
+}
+
+export type StepKey = 'pomodoro' | 'shortBreak' | 'longBreak' | 'deepWork';
+
+/**
+ * A sequence step with its duration and tone already decided. The engine stores
+ * these verbatim, so a running sequence can't be reshaped by a later preset edit.
+ */
+export interface ResolvedStep {
+  label: string;
+  seconds: number;
+  sound: string;
+  notification?: string;
+}
+
+export interface ResolvedSequenceInput {
+  id: string;
+  name: string;
+  steps: ResolvedStep[];
+  loopEnabled: boolean;
 }
 
 /** Legacy Timer shape used by history/stats parts of the store. */
@@ -60,14 +82,14 @@ export interface Stats {
 export interface Sequence {
   id: string;
   name: string;
-  steps: Array<'pomodoro' | 'shortBreak' | 'longBreak' | 'deepWork'>;
+  steps: StepKey[];
   loop: boolean;
 }
 
 export interface ActiveSequence {
   id: string;
   name: string;
-  steps: Array<'pomodoro' | 'shortBreak' | 'longBreak' | 'deepWork'>;
+  steps: StepKey[];
   loop: boolean;
   currentStep: number;
 }
@@ -95,11 +117,33 @@ export interface CustomSound {
   data: string; // base64 data URL
 }
 
-export interface EnginePresets {
-  pomodoro: number;
-  short_break: number;
-  long_break: number;
-  deep_work: number;
+const STEP_LABELS: Record<StepKey, string> = {
+  pomodoro:   'Pomodoro',
+  shortBreak: 'Short Break',
+  longBreak:  'Long Break',
+  deepWork:   'Deep Work',
+};
+
+const STEP_SOUNDS: Record<StepKey, string> = {
+  pomodoro:   'chime',
+  deepWork:   'chime',
+  shortBreak: 'water',
+  longBreak:  'water',
+};
+
+/** Turn a saved preset-based sequence into concrete steps using current settings. */
+export function resolveSequenceSteps(sequence: Sequence, settings: Settings): ResolvedStep[] {
+  return sequence.steps
+    .filter((key): key is StepKey => key in STEP_LABELS)
+    .map((key) => {
+      const label = STEP_LABELS[key];
+      return {
+        label,
+        seconds: Math.max(1, Math.round((settings.presets[key] ?? 25) * 60)),
+        sound: STEP_SOUNDS[key],
+        notification: `${label} complete!`,
+      };
+    });
 }
 
 // ─── Store interface ──────────────────────────────────────────────────────────
@@ -138,6 +182,8 @@ interface TimerStore {
     notificationMsg?: string;
   }) => Promise<void>;
   startSequence: (sequence: Sequence) => Promise<void>;
+  /** Start a sequence whose steps already carry explicit durations and tones. */
+  startResolvedSequence: (input: ResolvedSequenceInput) => Promise<void>;
   pause: () => Promise<void>;
   resume: () => Promise<void>;
   skip: () => Promise<void>;
@@ -171,6 +217,8 @@ interface TimerStore {
   resumeStopwatch: () => void;
   tickStopwatch: () => void;
   stopStopwatch: (label: string) => void;
+  /** Abandon the current stopwatch run without recording a session. */
+  discardStopwatch: () => void;
   deleteStopwatchSession: (id: string) => void;
   updateStopwatchSessionLabel: (id: string, label: string) => void;
   clearStopwatchSessions: () => void;
@@ -181,18 +229,32 @@ export const DEFAULT_SETTINGS: Settings = {
   volume: 70,
   soundEnabled: true,
   notificationsEnabled: true,
-  autoStartBreaks: false,
+  autoStartBreaks: true,
   defaultSound: 'chime',
 };
 
-function settingsToEnginePresets(s: Settings): EnginePresets {
-  return {
-    pomodoro:    s.presets.pomodoro,
-    short_break: s.presets.shortBreak,
-    long_break:  s.presets.longBreak,
-    deep_work:   s.presets.deepWork,
-  };
-}
+/**
+ * Id of the last completion we acted on.
+ *
+ * `timer:complete` must be idempotent on this side too: a skip landing on the
+ * same tick as the natural end, or a second window acking the same event, would
+ * otherwise double-log history and advance the sequence twice (silently eating a
+ * step). Cleared whenever a new step starts or the timer ticks, so a looping
+ * sequence can legitimately complete the same step id again.
+ */
+let lastCompletedId: string | null = null;
+
+/** How long a finished standalone timer stays on screen before the UI resets. */
+const COMPLETE_LINGER_MS = 8_000;
+
+const IDLE_STOPWATCH: TimerStore['stopwatch'] = {
+  running: false,
+  paused: false,
+  startedAt: null,
+  sessionStartedAt: null,
+  accumulatedMs: 0,
+  elapsedMs: 0,
+};
 
 // ─── Store creation ───────────────────────────────────────────────────────────
 
@@ -211,51 +273,60 @@ export const useTimerStore = create<TimerStore>((set, get) => ({
   toast: null,
 
   // Stopwatch state
-  stopwatch: {
-    running: false,
-    paused: false,
-    startedAt: null,
-    sessionStartedAt: null,
-    accumulatedMs: 0,
-    elapsedMs: 0,
-  },
+  stopwatch: IDLE_STOPWATCH,
   stopwatchSessions: [],
 
   // ── Engine actions ──────────────────────────────────────────────────────────
 
+  // Every engine call adopts the state the engine returns rather than guessing
+  // locally, so the UI can never drift out of sync with the authoritative timer.
+
   startTimer: async ({ id, name, totalSeconds, soundType, notificationMsg }) => {
     const { settings } = get();
-    set({ isSequenceActive: false, sequenceComplete: false });
-    await invoke('cmd_start_timer', {
-      id: id ?? Date.now().toString(),
+    lastCompletedId = null;
+    const timer = await invoke<RustTimerState>('cmd_start_timer', {
+      id: id ?? crypto.randomUUID(),
       name,
       totalSeconds,
       soundType: soundType ?? settings.defaultSound,
       notificationMsg: notificationMsg ?? `${name} complete!`,
     });
+    set({ activeTimer: timer, isSequenceActive: false, sequenceComplete: false });
   },
 
   startSequence: async (sequence) => {
     const { settings } = get();
-    set({ isSequenceActive: true, sequenceComplete: false });
-    await invoke('cmd_start_sequence', {
-      sequenceJson: JSON.stringify(sequence),
-      presetsJson: JSON.stringify(settingsToEnginePresets(settings)),
+    const steps = resolveSequenceSteps(sequence, settings);
+    if (steps.length === 0) {
+      get().showToast('That sequence has no valid steps');
+      return;
+    }
+    await get().startResolvedSequence({
+      id: sequence.id,
+      name: sequence.name,
+      steps,
+      loopEnabled: sequence.loop,
     });
   },
 
+  startResolvedSequence: async (input) => {
+    if (input.steps.length === 0) {
+      get().showToast('Add at least one step first');
+      return;
+    }
+    lastCompletedId = null;
+    const timer = await invoke<RustTimerState>('cmd_start_sequence', { sequence: input });
+    set({ activeTimer: timer, isSequenceActive: true, sequenceComplete: false });
+  },
+
   pause: async () => {
-    await invoke('cmd_pause_timer');
-    set((s) => ({
-      activeTimer: s.activeTimer ? { ...s.activeTimer, phase: 'Paused' } : null,
-    }));
+    const timer = await invoke<RustTimerState | null>('cmd_pause_timer');
+    if (timer) set({ activeTimer: timer });
   },
 
   resume: async () => {
-    await invoke('cmd_resume_timer');
-    set((s) => ({
-      activeTimer: s.activeTimer ? { ...s.activeTimer, phase: 'Running' } : null,
-    }));
+    const timer = await invoke<RustTimerState | null>('cmd_resume_timer');
+    if (timer) set({ activeTimer: timer });
   },
 
   skip: async () => {
@@ -263,10 +334,12 @@ export const useTimerStore = create<TimerStore>((set, get) => ({
   },
 
   extendTimer: async (seconds) => {
-    await invoke('cmd_extend_timer', { seconds });
+    const timer = await invoke<RustTimerState | null>('cmd_extend_timer', { seconds });
+    if (timer) set({ activeTimer: timer });
   },
 
   stop: async () => {
+    lastCompletedId = null;
     await invoke('cmd_stop_timer');
     set({ activeTimer: null, isSequenceActive: false, sequenceComplete: false });
   },
@@ -274,82 +347,120 @@ export const useTimerStore = create<TimerStore>((set, get) => ({
   // ── Internal event handlers ─────────────────────────────────────────────────
 
   _onTick: (timerState) => {
+    lastCompletedId = null;
     set({ activeTimer: timerState });
   },
 
   _onComplete: async (timerState, onPersist?) => {
+    if (lastCompletedId === timerState.id) return;
+    lastCompletedId = timerState.id;
+
     set({ activeTimer: timerState });
 
     const { settings, customSounds, stats } = get();
+    const skipped = timerState.skipped === true;
 
-    // Play sound
-    if (settings.soundEnabled) {
-      playCompletionSound(timerState.sound_type, customSounds, settings.volume);
+    // A skipped phase is not an accomplishment: no tone, no notification, and no
+    // entry in history or the pomodoro count. It only moves the sequence along.
+    if (!skipped) {
+      if (settings.soundEnabled) {
+        playCompletionSound(timerState.sound_type, customSounds, settings.volume);
+      }
+
+      if (settings.notificationsEnabled) {
+        try {
+          let granted = await isPermissionGranted();
+          if (!granted) {
+            const perm = await requestPermission();
+            granted = perm === 'granted';
+          }
+          if (granted) {
+            sendNotification({
+              title: '✨ Timer Complete!',
+              body: timerState.notification_msg || `${timerState.name} is done!`,
+            });
+          }
+        } catch (e) {
+          console.warn('Notification error:', e);
+        }
+      }
+
+      const historyItem: HistoryItem = {
+        name: timerState.name,
+        duration: timerState.total_seconds,
+        completedAt: Date.now(),
+      };
+      get().addHistory(historyItem);
+
+      // Update daily stats
+      const today = new Date().toDateString();
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      let { streak, pomodoroCount } = stats;
+      if (stats.lastActiveDate !== today) {
+        if (stats.lastActiveDate === yesterday.toDateString()) {
+          streak++;
+        } else {
+          streak = 1;
+        }
+      }
+      if (timerState.name.includes('Pomodoro') || timerState.name.includes('Deep Work')) {
+        pomodoroCount++;
+      }
+      get().updateStats({ lastActiveDate: today, streak, pomodoroCount });
     }
 
-    // Desktop notification
-    if (settings.notificationsEnabled) {
+    // If this was a sequence step, hand control back to the engine. Passing the
+    // step index lets the engine reject a duplicate or stale ack instead of
+    // skipping a step. A skip always chains straight into the next step —
+    // gating it behind auto-start would leave the user stranded on a phase they
+    // just asked to leave.
+    const { isSequenceActive: stillActive, settings: current } = get();
+    if (stillActive && timerState.sequence_id) {
       try {
-        let granted = await isPermissionGranted();
-        if (!granted) {
-          const perm = await requestPermission();
-          granted = perm === 'granted';
-        }
-        if (granted) {
-          sendNotification({
-            title: '✨ Timer Complete!',
-            body: timerState.notification_msg || `${timerState.name} is done!`,
-          });
+        const next = await invoke<RustTimerState | null>('cmd_next_sequence_step', {
+          completedStep: timerState.sequence_step ?? null,
+          startPaused: !skipped && !current.autoStartBreaks,
+        });
+        if (next) {
+          set({ activeTimer: next });
+          if (next.phase === 'Paused') {
+            get().showToast(`Up next: ${next.name} — press Resume`);
+          }
         }
       } catch (e) {
-        console.warn('Notification error:', e);
+        console.warn('Sequence advance failed:', e);
       }
-    }
-
-    // Add to history
-    const historyItem: HistoryItem = {
-      name: timerState.name,
-      duration: timerState.total_seconds,
-      completedAt: Date.now(),
-    };
-    get().addHistory(historyItem);
-
-    // Update daily stats
-    const today = new Date().toDateString();
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    let { streak, pomodoroCount } = stats;
-    if (stats.lastActiveDate !== today) {
-      if (stats.lastActiveDate === yesterday.toDateString()) {
-        streak++;
+    } else {
+      // A finished standalone timer used to sit on screen at 00:00 forever,
+      // labelled "Paused", until the user hit the bin. Let it linger long enough
+      // to be noticed, then return the UI to idle. A skip clears at once — the
+      // user is already done with it.
+      if (skipped) {
+        await get().stop();
       } else {
-        streak = 1;
+        setTimeout(() => {
+          const cur = get();
+          if (cur.activeTimer?.id === timerState.id && cur.activeTimer.phase === 'Complete') {
+            void cur.stop();
+          }
+        }, COMPLETE_LINGER_MS);
       }
-    }
-    if (timerState.name.includes('Pomodoro') || timerState.name.includes('Deep Work')) {
-      pomodoroCount++;
-    }
-    get().updateStats({ lastActiveDate: today, streak, pomodoroCount });
-
-    // If sequence, auto-advance
-    const { isSequenceActive: stillActive } = get();
-    if (stillActive && timerState.sequence_id) {
-      const updatedSettings = get().settings;
-      invoke('cmd_next_sequence_step', {
-        presetsJson: JSON.stringify(settingsToEnginePresets(updatedSettings)),
-      }).catch(console.warn);
     }
 
     onPersist?.();
   },
 
-  _onSequenceStepStarted: (step) => {
-    console.log(`[Chronosphere] Sequence step ${step} started`);
+  _onSequenceStepStarted: () => {
+    // A fresh step means the previous completion is fully handled; re-arm the
+    // dedupe guard so a looping sequence can complete the same step id again.
+    lastCompletedId = null;
   },
 
   _onSequenceComplete: () => {
+    lastCompletedId = null;
     set({ isSequenceActive: false, sequenceComplete: true, activeTimer: null });
-    useTimerStore.getState().showToast('🎉 Sequence complete!');
+    get().showToast('🎉 Sequence complete!');
   },
 
   // ── Persisted/legacy actions ────────────────────────────────────────────────
@@ -406,11 +517,30 @@ export const useTimerStore = create<TimerStore>((set, get) => ({
   clearToast: () => set({ toast: null }),
 
   hydrate: (data) =>
-    set((s) => ({
-      ...s,
-      ...data,
-      stopwatchSessions: data.stopwatchSessions ?? s.stopwatchSessions,
-    })),
+    set((s) => {
+      // A stopwatch persisted mid-run comes back *paused* at the elapsed value it
+      // had when the app closed. Letting it stay "running" would bill all the
+      // time the app wasn't even open to the session.
+      const sw = data.stopwatch;
+      const stopwatch = sw
+        ? sw.running && sw.startedAt
+          ? {
+              ...sw,
+              running: false,
+              paused: true,
+              startedAt: null,
+              accumulatedMs: sw.elapsedMs,
+            }
+          : sw
+        : s.stopwatch;
+
+      return {
+        ...s,
+        ...data,
+        stopwatch,
+        stopwatchSessions: data.stopwatchSessions ?? s.stopwatchSessions,
+      };
+    }),
 
   // ── Stopwatch actions ────────────────────────────────────────────────────────
 
@@ -479,25 +609,25 @@ export const useTimerStore = create<TimerStore>((set, get) => ({
       // Allow stopping from either running or paused state
       if (!sw.running && !sw.paused) return s;
       const endedAt = new Date().toISOString();
+      // Measure from the clock rather than reusing elapsedMs, which is only as
+      // fresh as the last 250ms tick and would round the session short.
+      const durationMs = sw.running && sw.startedAt
+        ? sw.accumulatedMs + (Date.now() - new Date(sw.startedAt).getTime())
+        : sw.elapsedMs;
       const session: StopwatchSession = {
         id: crypto.randomUUID(),
         label,
         startedAt: sw.sessionStartedAt ?? sw.startedAt ?? endedAt,
         endedAt,
-        durationMs: sw.elapsedMs,
+        durationMs: Math.max(0, durationMs),
       };
       return {
-        stopwatch: {
-          running: false,
-          paused: false,
-          startedAt: null,
-          sessionStartedAt: null,
-          accumulatedMs: 0,
-          elapsedMs: 0,
-        },
+        stopwatch: IDLE_STOPWATCH,
         stopwatchSessions: [...s.stopwatchSessions, session],
       };
     }),
+
+  discardStopwatch: () => set({ stopwatch: IDLE_STOPWATCH }),
 
   deleteStopwatchSession: (id) =>
     set((s) => ({
@@ -518,25 +648,13 @@ export const useTimerStore = create<TimerStore>((set, get) => ({
 // Call this once from App.tsx inside useEffect. Returns a cleanup function.
 
 export async function initTimerListeners(onPersist?: () => void): Promise<() => void> {
-  // Rehydrate state if window was closed/reopened mid-session
-  try {
-    const currentState = await invoke<RustTimerState | null>('cmd_get_timer_state');
-    if (currentState) {
-      useTimerStore.setState({ activeTimer: currentState });
-      if (currentState.sequence_id) {
-        useTimerStore.setState({ isSequenceActive: true });
-      }
-    }
-  } catch (e) {
-    console.warn('State rehydration failed:', e);
-  }
-
+  // Subscribe *before* rehydrating so a tick that fires mid-setup isn't dropped.
   const unlisteners: UnlistenFn[] = await Promise.all([
     listen<RustTimerState>('timer:tick', (e) => {
       useTimerStore.getState()._onTick(e.payload);
     }),
     listen<RustTimerState>('timer:complete', (e) => {
-      useTimerStore.getState()._onComplete(e.payload, onPersist);
+      void useTimerStore.getState()._onComplete(e.payload, onPersist);
     }),
     listen<number>('sequence:step-started', (e) => {
       useTimerStore.getState()._onSequenceStepStarted(e.payload);
@@ -545,6 +663,23 @@ export async function initTimerListeners(onPersist?: () => void): Promise<() => 
       useTimerStore.getState()._onSequenceComplete();
     }),
   ]);
+
+  // Rehydrate if the window was closed/reopened mid-session. The engine syncs
+  // against the wall clock first, so this reflects real elapsed time even if the
+  // machine slept in between.
+  try {
+    lastCompletedId = null;
+    const currentState = await invoke<RustTimerState | null>('cmd_get_timer_state');
+    if (currentState) {
+      useTimerStore.setState({
+        activeTimer: currentState,
+        isSequenceActive: Boolean(currentState.sequence_id),
+        sequenceComplete: false,
+      });
+    }
+  } catch (e) {
+    console.warn('State rehydration failed:', e);
+  }
 
   return () => unlisteners.forEach((u) => u());
 }

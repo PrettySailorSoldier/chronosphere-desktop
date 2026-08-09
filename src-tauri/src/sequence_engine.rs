@@ -1,71 +1,63 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum StepType {
-    Pomodoro,
-    ShortBreak,
-    LongBreak,
-    DeepWork,
+use crate::timer_engine::MAX_SECONDS;
+
+/// A fully resolved step: label, duration and tone are decided before the
+/// sequence starts.
+///
+/// Previously the engine stored abstract step *types* and re-resolved their
+/// durations from the user's presets on every transition, which meant editing a
+/// preset mid-sequence silently changed the length of steps already in flight.
+/// Resolving up front makes a running sequence immutable and lets arbitrary
+/// user-authored phases share this one engine.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SequenceStep {
+    pub label: String,
+    pub seconds: u32,
+    pub sound: String,
+    pub notification: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Sequence {
     pub id: String,
     pub name: String,
-    pub steps: Vec<StepType>,
+    pub steps: Vec<SequenceStep>,
     pub current_step: usize,
     pub loop_enabled: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Presets {
-    pub pomodoro: u32,
-    pub short_break: u32,
-    pub long_break: u32,
-    pub deep_work: u32,
-}
-
-impl Default for Presets {
-    fn default() -> Self {
-        Presets {
-            pomodoro: 25,
-            short_break: 5,
-            long_break: 15,
-            deep_work: 52,
-        }
-    }
-}
-
 impl Sequence {
-    /// Returns the duration in seconds for the current step using provided presets.
-    pub fn current_step_seconds(&self, presets: &Presets) -> u32 {
-        match &self.steps[self.current_step] {
-            StepType::Pomodoro   => presets.pomodoro   * 60,
-            StepType::ShortBreak => presets.short_break * 60,
-            StepType::LongBreak  => presets.long_break  * 60,
-            StepType::DeepWork   => presets.deep_work   * 60,
+    pub fn new(
+        id: String,
+        name: String,
+        steps: Vec<SequenceStep>,
+        loop_enabled: bool,
+    ) -> Result<Self, String> {
+        if steps.is_empty() {
+            return Err("Sequence has no steps".to_string());
         }
+        let steps = steps
+            .into_iter()
+            .map(|mut s| {
+                s.seconds = s.seconds.clamp(1, MAX_SECONDS);
+                s
+            })
+            .collect();
+        Ok(Sequence { id, name, steps, current_step: 0, loop_enabled })
     }
 
-    /// Returns the display name for the current step.
-    pub fn current_step_name(&self) -> &'static str {
-        match &self.steps[self.current_step] {
-            StepType::Pomodoro   => "Pomodoro",
-            StepType::ShortBreak => "Short Break",
-            StepType::LongBreak  => "Long Break",
-            StepType::DeepWork   => "Deep Work",
-        }
+    /// The step now in flight. Returns None only if `current_step` was somehow
+    /// pushed out of range — callers treat that as "sequence over" instead of panicking.
+    pub fn current(&self) -> Option<&SequenceStep> {
+        self.steps.get(self.current_step)
     }
 
-    /// Returns the sound type for the current step.
-    pub fn current_step_sound(&self) -> &'static str {
-        match &self.steps[self.current_step] {
-            StepType::Pomodoro | StepType::DeepWork => "chime",
-            StepType::ShortBreak | StepType::LongBreak => "water",
-        }
+    pub fn total_steps(&self) -> usize {
+        self.steps.len()
     }
 
-    /// Advances to the next step. Returns true if there is a next step, false if sequence is done.
+    /// Advance to the next step. Returns false when the sequence is finished.
     pub fn advance(&mut self) -> bool {
         let next = self.current_step + 1;
         if next < self.steps.len() {
@@ -78,9 +70,81 @@ impl Sequence {
             false
         }
     }
+}
 
-    /// Returns true if current step is the last one and loop is disabled.
-    pub fn is_final_step(&self) -> bool {
-        self.current_step + 1 >= self.steps.len() && !self.loop_enabled
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn step(label: &str, seconds: u32) -> SequenceStep {
+        SequenceStep {
+            label: label.into(),
+            seconds,
+            sound: "chime".into(),
+            notification: format!("{label} complete!"),
+        }
+    }
+
+    fn seq(loop_enabled: bool) -> Sequence {
+        Sequence::new(
+            "s1".into(),
+            "Test".into(),
+            vec![step("Focus", 1500), step("Break", 300)],
+            loop_enabled,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn rejects_empty_sequence() {
+        assert!(Sequence::new("s".into(), "n".into(), vec![], false).is_err());
+    }
+
+    #[test]
+    fn clamps_out_of_range_durations() {
+        let s = Sequence::new(
+            "s".into(),
+            "n".into(),
+            vec![step("Zero", 0), step("Huge", u32::MAX)],
+            false,
+        )
+        .unwrap();
+        assert_eq!(s.steps[0].seconds, 1);
+        assert_eq!(s.steps[1].seconds, MAX_SECONDS);
+    }
+
+    #[test]
+    fn advances_linearly_then_stops() {
+        let mut s = seq(false);
+        assert_eq!(s.current().unwrap().label, "Focus");
+        assert!(s.advance());
+        assert_eq!(s.current().unwrap().label, "Break");
+        assert!(!s.advance());
+        // A finished sequence stays put no matter how often advance is called.
+        assert!(!s.advance());
+        assert_eq!(s.current_step, 1);
+    }
+
+    #[test]
+    fn wraps_when_looping() {
+        let mut s = seq(true);
+        assert!(s.advance());
+        assert!(s.advance());
+        assert_eq!(s.current_step, 0);
+        assert_eq!(s.current().unwrap().label, "Focus");
+    }
+
+    #[test]
+    fn single_step_loop_repeats_itself() {
+        let mut s = Sequence::new("s".into(), "n".into(), vec![step("Solo", 60)], true).unwrap();
+        assert!(s.advance());
+        assert_eq!(s.current_step, 0);
+    }
+
+    #[test]
+    fn current_is_none_when_index_out_of_range() {
+        let mut s = seq(false);
+        s.current_step = 99;
+        assert!(s.current().is_none());
     }
 }

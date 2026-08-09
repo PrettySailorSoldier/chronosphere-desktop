@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { load } from '@tauri-apps/plugin-store';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useTimerStore, HistoryItem, Stats, Settings, Sequence, CustomSound, DEFAULT_SETTINGS, initTimerListeners, StopwatchSession } from './store/timerStore';
@@ -37,8 +38,24 @@ function formatClock(s: number) {
   return `${m}:${String(sec).padStart(2, '0')}`;
 }
 
+/** Keys written to the on-disk store, and the state changes that should trigger a save. */
+const PERSISTED_KEYS = [
+  'history', 'stats', 'settings', 'sequences',
+  'customSounds', 'stopwatchSessions', 'stopwatch',
+] as const;
+
 function App() {
-  const store = useTimerStore();
+  // Subscribe only to what App itself renders. Pulling the whole store here made
+  // every 200ms engine tick and 250ms stopwatch tick re-render the entire tree.
+  const { activeTimer, toast, hydrate, clearToast, stop } = useTimerStore(
+    useShallow((s) => ({
+      activeTimer: s.activeTimer,
+      toast: s.toast,
+      hydrate: s.hydrate,
+      clearToast: s.clearToast,
+      stop: s.stop,
+    })),
+  );
   const [showSettings, setShowSettings] = useState(false);
   const [storeReady, setStoreReady] = useState(false);
   const [pendingLabelId, setPendingLabelId] = useState<string | null>(null);
@@ -58,22 +75,23 @@ function App() {
 
   // Toast auto-dismiss
   useEffect(() => {
-    if (!store.toast) return;
-    const t = setTimeout(() => store.clearToast(), 3000);
+    if (!toast) return;
+    const t = setTimeout(() => clearToast(), 3000);
     return () => clearTimeout(t);
-  }, [store.toast]);
+  }, [toast, clearToast]);
 
   // ─── Persist to Tauri store ──────────────────────────────────────────
   const persist = useCallback(async () => {
     if (!storeRef.current) return;
     const s = useTimerStore.getState();
-    await storeRef.current.set('history',           s.history);
-    await storeRef.current.set('stats',             s.stats);
-    await storeRef.current.set('settings',          s.settings);
-    await storeRef.current.set('sequences',         s.sequences);
-    await storeRef.current.set('customSounds',      s.customSounds);
-    await storeRef.current.set('stopwatchSessions', s.stopwatchSessions);
-    await storeRef.current.save();
+    try {
+      for (const key of PERSISTED_KEYS) {
+        await storeRef.current.set(key, s[key]);
+      }
+      await storeRef.current.save();
+    } catch (e) {
+      console.warn('Store save failed:', e);
+    }
   }, []);
 
   // ─── Load persisted data on mount ─────────────────────────────────────────
@@ -88,8 +106,10 @@ function App() {
         const sequences         = (await s.get<Sequence[]>('sequences'))       ?? [];
         const customSounds      = (await s.get<CustomSound[]>('customSounds')) ?? [];
         const stopwatchSessions = (await s.get<StopwatchSession[]>('stopwatchSessions')) ?? [];
-        store.hydrate({
+        const stopwatch         = await s.get<ReturnType<typeof useTimerStore.getState>['stopwatch']>('stopwatch');
+        hydrate({
           history, stats, sequences, customSounds, stopwatchSessions,
+          ...(stopwatch ? { stopwatch } : {}),
           ...(settings ? { settings: { ...DEFAULT_SETTINGS, ...settings } } : {}),
         });
       } catch (e) {
@@ -98,47 +118,73 @@ function App() {
         setStoreReady(true);
       }
     })();
-  }, []);
+  }, [hydrate]);
 
   // ─── Wire up Rust timer event listeners ───────────────────────────────────
   useEffect(() => {
     let cleanup: (() => void) | undefined;
-    initTimerListeners(persist).then((fn) => { cleanup = fn; });
-    return () => { cleanup?.(); };
-  }, []);
+    let cancelled = false;
+    initTimerListeners(persist).then((fn) => {
+      // Unmounting before setup resolved used to drop the cleanup fn on the
+      // floor, leaking a listener set on every remount (and in StrictMode).
+      if (cancelled) fn();
+      else cleanup = fn;
+    });
+    return () => { cancelled = true; cleanup?.(); };
+  }, [persist]);
 
   // ─── Persist whenever any persisted slice changes ─────────────────────────
-  // customSounds/history/stats were previously missing here, so uploaded tones
-  // were lost on restart unless a timer happened to complete afterwards.
-  useEffect(() => { if (storeReady) persist(); },
-    [store.settings, store.sequences, store.stopwatchSessions,
-     store.customSounds, store.history, store.stats, storeReady]);
+  // Subscribed imperatively so App doesn't re-render on these, and debounced so
+  // a burst of edits collapses into one disk write instead of six per keystroke.
+  useEffect(() => {
+    if (!storeReady) return;
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    const unsubscribe = useTimerStore.subscribe((state, prev) => {
+      if (!PERSISTED_KEYS.some((k) => state[k] !== prev[k])) return;
+      if (timeout) clearTimeout(timeout);
+      timeout = setTimeout(() => { timeout = null; void persist(); }, 400);
+    });
+    return () => {
+      unsubscribe();
+      // Flush a pending write rather than losing the last edit on unmount.
+      if (timeout) { clearTimeout(timeout); void persist(); }
+    };
+  }, [storeReady, persist]);
 
   // ─── Window title shows live countdown ────────────────────────────────────
   useEffect(() => {
-    const t = store.activeTimer;
-    const title = t && t.phase !== 'Complete'
-      ? `${t.phase === 'Paused' ? '⏸' : '⏳'} ${formatClock(t.remaining_seconds)} · ${t.name}`
+    const title = activeTimer && activeTimer.phase !== 'Complete'
+      ? `${activeTimer.phase === 'Paused' ? '⏸' : '⏳'} ${formatClock(activeTimer.remaining_seconds)} · ${activeTimer.name}`
       : 'Chrono Sphere';
     getCurrentWindow().setTitle(title).catch(() => {});
-  }, [store.activeTimer?.remaining_seconds, store.activeTimer?.phase, store.activeTimer?.name]);
+  }, [activeTimer?.remaining_seconds, activeTimer?.phase, activeTimer?.name]);
+
+  // Leave the title clean if the view goes away while a timer is still running.
+  useEffect(() => () => { getCurrentWindow().setTitle('Chrono Sphere').catch(() => {}); }, []);
 
   // ─── Keyboard shortcuts ───────────────────────────────────────────────────
-  // Space = pause/resume active timer · Esc = close settings
+  // Space = pause/resume · S = skip phase · Esc = close settings
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
-      const typing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName);
+      const typing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)
+        || target.isContentEditable;
       if (e.key === 'Escape') {
         setShowSettings(false);
         return;
       }
-      if (e.code === 'Space' && !typing) {
-        const { activeTimer, pause, resume } = useTimerStore.getState();
-        if (!activeTimer) return;
+      if (typing || e.ctrlKey || e.metaKey || e.altKey) return;
+
+      const state = useTimerStore.getState();
+      if (!state.activeTimer) return;
+
+      if (e.code === 'Space') {
         e.preventDefault();
-        if (activeTimer.phase === 'Running') pause();
-        else if (activeTimer.phase === 'Paused') resume();
+        if (state.activeTimer.phase === 'Running') void state.pause();
+        else if (state.activeTimer.phase === 'Paused') void state.resume();
+      } else if (e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        void state.skip();
       }
     };
     window.addEventListener('keydown', onKey);
@@ -146,20 +192,24 @@ function App() {
   }, []);
 
   // ─── Timer creation logic ─────────────────────────────────────────────────
+  // These read actions off getState() rather than closing over render values, so
+  // there is no stale-closure hazard and the callbacks never need to change.
   const handlePresetStart = useCallback(async (minutes: number, name: string, soundType?: string) => {
-    await store.startTimer({
+    const s = useTimerStore.getState();
+    await s.startTimer({
       name,
-      totalSeconds: minutes * 60,
-      soundType: soundType || store.settings.defaultSound,
+      totalSeconds: Math.round(minutes * 60),
+      soundType: soundType || s.settings.defaultSound,
       notificationMsg: `${name} complete! ✨`,
     });
-  }, [store.settings.defaultSound]);
+  }, []);
 
   const handleCustomStart = useCallback(async (h: number, m: number, s: number, name: string, sound: string, msg: string) => {
+    const state = useTimerStore.getState();
     const total = h * 3600 + m * 60 + s;
-    if (total <= 0) { store.showToast('Please set a time > 0'); return; }
-    if (total > 86400) { store.showToast('Max 24h'); return; }
-    await store.startTimer({
+    if (total <= 0) { state.showToast('Please set a time > 0'); return; }
+    if (total > 86400) { state.showToast('Max 24h'); return; }
+    await state.startTimer({
       name,
       totalSeconds: total,
       soundType: sound,
@@ -168,27 +218,29 @@ function App() {
   }, []);
 
   const handleRevive = useCallback(async (name: string, totalSeconds: number) => {
-    await store.startTimer({
+    const s = useTimerStore.getState();
+    await s.startTimer({
       name,
       totalSeconds,
       notificationMsg: `${name} complete! ✨`,
     });
-    store.showToast(`Restarted: ${name}`);
-  }, [store.settings.defaultSound]);
+    s.showToast(`Restarted: ${name}`);
+  }, []);
 
   const handlePauseResume = useCallback(async () => {
-    const { activeTimer, pause, resume } = useTimerStore.getState();
-    if (!activeTimer) return;
-    if (activeTimer.phase === 'Running') {
-      await pause();
-    } else if (activeTimer.phase === 'Paused') {
-      await resume();
-    }
+    const { activeTimer: t, pause, resume } = useTimerStore.getState();
+    if (!t) return;
+    if (t.phase === 'Running') await pause();
+    else if (t.phase === 'Paused') await resume();
+  }, []);
+
+  const handleSkip = useCallback(async () => {
+    await useTimerStore.getState().skip();
   }, []);
 
   const handleStop = useCallback(async () => {
-    await store.stop();
-  }, []);
+    await stop();
+  }, [stop]);
 
   // ─── Circadian header ─────────────────────────────────────────────────────
   const hour = new Date().getHours();
@@ -205,7 +257,7 @@ function App() {
   return (
     <div className="app-container">
       {/* Toast */}
-      {store.toast && <div className="toast">{store.toast}</div>}
+      {toast && <div className="toast" role="status" aria-live="polite">{toast}</div>}
 
       {/* Settings overlay */}
       {showSettings && <SettingsPanel onClose={() => setShowSettings(false)} />}
@@ -246,12 +298,12 @@ function App() {
       </div>
 
       {/* ── Now-running strip (visible when timer runs but user is on another tab) ── */}
-      {store.activeTimer && view !== 'timer' && (
+      {activeTimer && view !== 'timer' && (
         <button className="running-strip" onClick={() => setView('timer')}>
           <span className="running-strip-dot" />
-          <span className="running-strip-name">{store.activeTimer.name}</span>
+          <span className="running-strip-name">{activeTimer.name}</span>
           <span className="running-strip-time">
-            {formatClock(store.activeTimer.remaining_seconds)}
+            {formatClock(activeTimer.remaining_seconds)}
           </span>
           <span className="running-strip-hint">view ›</span>
         </button>
@@ -261,19 +313,22 @@ function App() {
       {view === 'timer' && (
         <>
           {/* Active timer — always at the top, most important thing on screen */}
-          {store.activeTimer && (
+          {activeTimer && (
             <>
               <div className="section-label">now running</div>
               <div className="timers-list">
                 <TimerCard
-                  key={store.activeTimer.id}
-                  id={store.activeTimer.id}
-                  name={store.activeTimer.name}
-                  totalSeconds={store.activeTimer.total_seconds}
-                  remainingSeconds={store.activeTimer.remaining_seconds}
-                  soundType={store.activeTimer.sound_type}
-                  isRunning={store.activeTimer.phase === 'Running'}
+                  key={activeTimer.id}
+                  id={activeTimer.id}
+                  name={activeTimer.name}
+                  totalSeconds={activeTimer.total_seconds}
+                  remainingSeconds={activeTimer.remaining_seconds}
+                  soundType={activeTimer.sound_type}
+                  isRunning={activeTimer.phase === 'Running'}
+                  phase={activeTimer.phase}
+                  isSequenceStep={Boolean(activeTimer.sequence_id)}
                   onPause={handlePauseResume}
+                  onSkip={handleSkip}
                   onDelete={handleStop}
                 />
               </div>

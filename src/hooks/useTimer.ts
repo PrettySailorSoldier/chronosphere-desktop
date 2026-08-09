@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import { useTimerStore } from '../store/timerStore';
 
 /**
@@ -6,26 +7,36 @@ import { useTimerStore } from '../store/timerStore';
  * for timer display logic.
  */
 export function useTimer() {
+  // Selected shallowly rather than pulling the whole store: an unselected
+  // useTimerStore() re-renders every consumer on *any* state change, including
+  // the 250ms stopwatch tick, which has nothing to do with the countdown.
   const {
     activeTimer,
     isSequenceActive,
     sequenceComplete,
     settings,
-    startTimer,
-    startSequence,
-    pause,
-    resume,
-    skip,
-    stop,
-    setSettings,
-  } = useTimerStore();
+  } = useTimerStore(
+    useShallow((s) => ({
+      activeTimer: s.activeTimer,
+      isSequenceActive: s.isSequenceActive,
+      sequenceComplete: s.sequenceComplete,
+      settings: s.settings,
+    })),
+  );
+
+  // Actions are stable across renders, so reading them off the store directly
+  // costs nothing and keeps them out of the subscription.
+  const {
+    startTimer, startSequence, startResolvedSequence,
+    pause, resume, skip, stop, extendTimer, setSettings,
+  } = useTimerStore.getState();
 
   const isRunning  = activeTimer?.phase === 'Running';
   const isPaused   = activeTimer?.phase === 'Paused';
   const isComplete = activeTimer?.phase === 'Complete';
   const isIdle     = !activeTimer;
 
-  // Progress fraction 0–1 for the ring animation
+  // Progress fraction 0–1 for the ring animation (elapsed share of the phase)
   const progress = activeTimer && activeTimer.total_seconds > 0
     ? (activeTimer.total_seconds - activeTimer.remaining_seconds) / activeTimer.total_seconds
     : 0;
@@ -66,10 +77,12 @@ export function useTimer() {
     // Actions
     startTimer,
     startSequence,
+    startResolvedSequence,
     pause,
     resume,
     skip,
     stop,
+    extendTimer,
     setSettings,
   };
 }

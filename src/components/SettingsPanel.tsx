@@ -299,8 +299,12 @@ export const SettingsPanel: React.FC<Props> = ({ onClose }) => {
               </div>
             ))}
             <div className="settings-row" style={{ marginTop: 8 }}>
-              <span className="settings-label">Auto-start breaks</span>
+              <span className="settings-label">Auto-start next step</span>
               <button className={`settings-toggle${autoBreaks ? ' on' : ''}`} onClick={() => setAutoBreaks(!autoBreaks)} />
+            </div>
+            <div className="settings-hint">
+              On, a sequence rolls straight into the next step. Off, it waits paused
+              so you can choose when to begin.
             </div>
             <button className="export-btn" style={{ marginTop: 8 }} onClick={saveSettings}>Save Presets</button>
           </div>

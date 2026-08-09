@@ -51,6 +51,7 @@ const StopwatchPanel: React.FC<StopwatchPanelProps> = ({
   const resumeStopwatch             = useTimerStore((s) => s.resumeStopwatch);
   const tickStopwatch               = useTimerStore((s) => s.tickStopwatch);
   const stopStopwatch               = useTimerStore((s) => s.stopStopwatch);
+  const discardStopwatch            = useTimerStore((s) => s.discardStopwatch);
   const updateStopwatchSessionLabel = useTimerStore((s) => s.updateStopwatchSessionLabel);
   const deleteStopwatchSession      = useTimerStore((s) => s.deleteStopwatchSession);
   const clearStopwatchSessions      = useTimerStore((s) => s.clearStopwatchSessions);
@@ -62,9 +63,12 @@ const StopwatchPanel: React.FC<StopwatchPanelProps> = ({
   // ── Tick interval ──────────────────────────────────────────────────────────
   useEffect(() => {
     if (!stopwatch.running) return;
+    // Each tick recomputes elapsed from startedAt, so a missed or late interval
+    // callback costs nothing — the displayed value can't drift.
+    tickStopwatch();
     const id = setInterval(tickStopwatch, 250);
     return () => clearInterval(id);
-  }, [stopwatch.running]);
+  }, [stopwatch.running, tickStopwatch]);
 
   // Auto-focus label input whenever it appears
   useEffect(() => {
@@ -90,6 +94,14 @@ const StopwatchPanel: React.FC<StopwatchPanelProps> = ({
       onPendingLabelChange(newest.id);
       setPendingLabelText('');
     }
+  }
+
+  function handleDiscard() {
+    const elapsed = useTimerStore.getState().stopwatch.elapsedMs;
+    // Only nag if there's something worth losing.
+    if (elapsed > 10_000 && !window.confirm('Discard this session without saving?')) return;
+    discardStopwatch();
+    onPendingLabelChange(null);
   }
 
   function handleLabelSave(id: string) {
@@ -185,6 +197,20 @@ const StopwatchPanel: React.FC<StopwatchPanelProps> = ({
               Stop
             </button>
           </>
+        )}
+
+        {/* Stopping always wrote a session, so a mistimed start could only be
+            undone by deleting the row afterwards. */}
+        {(stopwatch.running || stopwatch.paused) && (
+          <button
+            id="swp-discard-btn"
+            className="swp-btn swp-btn--discard"
+            onClick={handleDiscard}
+            aria-label="Discard without saving"
+          >
+            <span className="swp-btn-icon">✕</span>
+            Discard
+          </button>
         )}
       </div>
 

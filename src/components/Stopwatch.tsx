@@ -18,6 +18,7 @@ export const Stopwatch: React.FC = () => {
   const startStopwatch     = useTimerStore((s) => s.startStopwatch);
   const tickStopwatch      = useTimerStore((s) => s.tickStopwatch);
   const stopStopwatch      = useTimerStore((s) => s.stopStopwatch);
+  const discardStopwatch   = useTimerStore((s) => s.discardStopwatch);
 
   // Local controlled input for the session label
   const [label, setLabel] = useState('');
@@ -57,23 +58,10 @@ export const Stopwatch: React.FC = () => {
   }
 
   function handleDiscard() {
-    if (window.confirm('Discard without saving?')) {
-      // Reset to idle by stopping with a discard marker (won't appear — or use a dedicated reset)
-      // Since the new slice has no clearStopwatch, we call stopStopwatch with a sentinel
-      // that the user won't see because we immediately clear it — but to avoid polluting
-      // sessions we skip saving entirely: just reset state by calling startStopwatch on a
-      // zeroed watch via a no-save path. Instead we stop and won't display the result.
-      // Actually the cleanest approach: just leave running=false, startedAt=null, elapsedMs=0
-      // by calling stopStopwatch() — but that adds a session. So we skip this and let
-      // the user cancel the label prompt without saving.
-      setAwaitingLabel(false);
-      setLabel('');
-      // Force-reset by starting fresh then immediately stopping without a session
-      // (use store directly to bypass session push)
-      useTimerStore.setState({
-        stopwatch: { running: false, paused: false, startedAt: null, sessionStartedAt: null, accumulatedMs: 0, elapsedMs: 0 },
-      });
-    }
+    if (!window.confirm('Discard without saving?')) return;
+    setAwaitingLabel(false);
+    setLabel('');
+    discardStopwatch();
   }
 
   // ── Render ───────────────────────────────────────────────────────────────────
