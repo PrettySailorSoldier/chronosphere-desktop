@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { useTimerStore, Sequence, Settings, CustomSound, HistoryItem, Stats, StopwatchSession, DEFAULT_SETTINGS } from '../store/timerStore';
+import { useTimerStore, Sequence, Settings, CustomSound, HistoryItem, Stats, StopwatchSession, DEFAULT_SETTINGS, WARNING_MARKS_SECONDS } from '../store/timerStore';
 import { resolveSound } from '../audio/soundPlayer';
 import { SOUND_MAP, SOUND_LABELS } from '../utils/constants';
 
@@ -30,6 +30,7 @@ export const SettingsPanel: React.FC<Props> = ({ onClose }) => {
   const [volume, setVolume] = useState(settings.volume);
   const [soundEnabled, setSoundEnabled] = useState(settings.soundEnabled);
   const [notifEnabled, setNotifEnabled] = useState(settings.notificationsEnabled);
+  const [warnEnabled, setWarnEnabled] = useState(settings.warningsEnabled);
   const [autoBreaks, setAutoBreaks]   = useState(settings.autoStartBreaks);
   const [defaultSound, setDefaultSound] = useState(settings.defaultSound);
 
@@ -64,6 +65,7 @@ export const SettingsPanel: React.FC<Props> = ({ onClose }) => {
       volume,
       soundEnabled,
       notificationsEnabled: notifEnabled,
+      warningsEnabled: warnEnabled,
       autoStartBreaks: autoBreaks,
       defaultSound,
     };
@@ -321,7 +323,16 @@ export const SettingsPanel: React.FC<Props> = ({ onClose }) => {
               <span className="settings-label">Notifications</span>
               <button className={`settings-toggle${notifEnabled ? ' on' : ''}`} onClick={() => setNotifEnabled(!notifEnabled)} />
             </div>
-            
+            <div className="settings-row">
+              <span className="settings-label">Wrap-up reminders</span>
+              <button className={`settings-toggle${warnEnabled ? ' on' : ''}`} onClick={() => setWarnEnabled(!warnEnabled)} />
+            </div>
+            <div className="settings-hint">
+              A silent heads-up at {WARNING_MARKS_SECONDS.map((s) => s / 60).join(' and ')} minutes
+              left, so the end tone isn't a surprise. Timers too short to reach a
+              mark stay quiet.
+            </div>
+
             <div className="settings-section-title" style={{ marginTop: 12 }}>Audio Preferences</div>
             
             <div className="settings-row">

@@ -85,6 +85,8 @@ export interface Settings {
   volume: number;
   soundEnabled: boolean;
   notificationsEnabled: boolean;
+  /** Heads-up alerts at the marks in WARNING_MARKS_SECONDS, before the timer ends. */
+  warningsEnabled: boolean;
   autoStartBreaks: boolean;
   defaultSound: string;
 }
@@ -207,6 +209,7 @@ export const DEFAULT_SETTINGS: Settings = {
   volume: 70,
   soundEnabled: true,
   notificationsEnabled: true,
+  warningsEnabled: true,
   autoStartBreaks: true,
   defaultSound: 'chime',
 };
@@ -224,6 +227,54 @@ let lastCompletedId: string | null = null;
 
 /** How long a finished standalone timer stays on screen before the UI resets. */
 const COMPLETE_LINGER_MS = 8_000;
+
+/**
+ * Seconds-remaining marks that earn a heads-up while the timer is still running,
+ * so the end tone lands as a confirmation rather than a surprise. Descending.
+ */
+export const WARNING_MARKS_SECONDS = [600, 300];
+
+/**
+ * A mark is only worth announcing if the timer runs this much longer than it.
+ * Otherwise "10 minutes left" on a 10:20 timer fires twenty seconds in.
+ */
+const WARNING_MIN_LEAD_SECONDS = 60;
+
+/**
+ * The warning mark this tick just fell past, if any.
+ *
+ * Only a *downward* crossing counts, so a timer that starts at exactly 10:00 —
+ * or one rehydrated below a mark after the window reopened — stays quiet
+ * instead of warning about time it never had. A wall-clock resync after the
+ * machine sleeps can skip several marks in a single tick; the lowest one is
+ * the only thing still worth saying.
+ */
+function crossedWarningMark(prev: RustTimerState | null, next: RustTimerState): number | null {
+  if (!prev || prev.id !== next.id || next.phase !== 'Running') return null;
+  const crossed = WARNING_MARKS_SECONDS.filter(
+    (mark) =>
+      prev.remaining_seconds > mark &&
+      next.remaining_seconds <= mark &&
+      next.total_seconds - mark >= WARNING_MIN_LEAD_SECONDS,
+  );
+  return crossed.length > 0 ? Math.min(...crossed) : null;
+}
+
+/** Send a desktop notification, asking for permission the first time. */
+async function notify(title: string, body: string): Promise<void> {
+  try {
+    let granted = await isPermissionGranted();
+    if (!granted) {
+      const perm = await requestPermission();
+      granted = perm === 'granted';
+    }
+    if (granted) {
+      sendNotification({ title, body });
+    }
+  } catch (e) {
+    console.warn('Notification error:', e);
+  }
+}
 
 const IDLE_STOPWATCH: TimerStore['stopwatch'] = {
   running: false,
@@ -326,7 +377,25 @@ export const useTimerStore = create<TimerStore>((set, get) => ({
 
   _onTick: (timerState) => {
     lastCompletedId = null;
+    const previous = get().activeTimer;
     set({ activeTimer: timerState });
+
+    const mark = crossedWarningMark(previous, timerState);
+    if (mark === null) return;
+
+    const { settings } = get();
+    if (!settings.warningsEnabled) return;
+
+    // Deliberately silent. The tone is the part that startles, so a heads-up
+    // gets a toast and a notification and leaves the audio alone.
+    const minutes = Math.round(mark / 60);
+    get().showToast(`⏳ ${minutes} min left — ${timerState.name}`);
+    if (settings.notificationsEnabled) {
+      void notify(
+        `⏳ ${minutes} minutes left`,
+        `${timerState.name} — time to start wrapping up.`,
+      );
+    }
   },
 
   _onComplete: async (timerState, onPersist?) => {
@@ -346,21 +415,10 @@ export const useTimerStore = create<TimerStore>((set, get) => ({
       }
 
       if (settings.notificationsEnabled) {
-        try {
-          let granted = await isPermissionGranted();
-          if (!granted) {
-            const perm = await requestPermission();
-            granted = perm === 'granted';
-          }
-          if (granted) {
-            sendNotification({
-              title: '✨ Timer Complete!',
-              body: timerState.notification_msg || `${timerState.name} is done!`,
-            });
-          }
-        } catch (e) {
-          console.warn('Notification error:', e);
-        }
+        await notify(
+          '✨ Timer Complete!',
+          timerState.notification_msg || `${timerState.name} is done!`,
+        );
       }
 
       const historyItem: HistoryItem = {
