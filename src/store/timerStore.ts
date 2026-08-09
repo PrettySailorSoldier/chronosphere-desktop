@@ -53,20 +53,6 @@ export interface ResolvedSequenceInput {
   loopEnabled: boolean;
 }
 
-/** Legacy Timer shape used by history/stats parts of the store. */
-export interface Timer {
-  id: string;
-  name: string;
-  totalSeconds: number;
-  remainingSeconds: number;
-  endTime: number;
-  soundType: string;
-  notificationMsg: string;
-  isRunning: boolean;
-  sequenceTimer?: boolean;
-  autoStarted?: boolean;
-}
-
 export interface HistoryItem {
   name: string;
   duration: number;
@@ -84,14 +70,6 @@ export interface Sequence {
   name: string;
   steps: StepKey[];
   loop: boolean;
-}
-
-export interface ActiveSequence {
-  id: string;
-  name: string;
-  steps: StepKey[];
-  loop: boolean;
-  currentStep: number;
 }
 
 export interface Settings {
