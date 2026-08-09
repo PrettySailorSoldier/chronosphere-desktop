@@ -1,6 +1,6 @@
 import React from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { useTimerStore } from '../store/timerStore';
+import { useTimerStore, SequenceStep, isCustomStep, sequenceStepLabel } from '../store/timerStore';
 
 const STEP_LABELS: Record<string, string> = {
   pomodoro:   '🍅 Pomodoro',
@@ -8,6 +8,12 @@ const STEP_LABELS: Record<string, string> = {
   longBreak:  '🌙 Long Break',
   deepWork:   '🎯 Deep Work',
 };
+
+/** Custom steps carry their own name; preset keys get the decorated label. */
+function stepIndicatorLabel(step: SequenceStep): string {
+  if (isCustomStep(step)) return sequenceStepLabel(step);
+  return STEP_LABELS[step] ?? step;
+}
 
 export const SequencesSection: React.FC = () => {
   const { sequences, activeTimer, isSequenceActive } = useTimerStore(
@@ -79,12 +85,12 @@ export const SequencesSection: React.FC = () => {
             <button className="sequence-stop-btn" onClick={handleStop}>Stop</button>
           </div>
           <div className="sequence-progress-steps">
-            {(activeSeqDef?.steps ?? Array.from({ length: totalSteps }, (_, i) => `Step ${i + 1}`))
+            {(activeSeqDef?.steps ?? Array.from({ length: totalSteps }, (_, i): SequenceStep => ({ label: `Step ${i + 1}`, seconds: 0 })))
               .map((step, i) => {
                 let cls = 'sequence-step-indicator';
                 if (i < currentStep) cls += ' completed';
                 else if (i === currentStep) cls += ' current';
-                return <span key={i} className={cls}>{STEP_LABELS[step] ?? step}</span>;
+                return <span key={i} className={cls}>{stepIndicatorLabel(step)}</span>;
               })}
           </div>
         </div>

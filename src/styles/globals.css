@@ -531,7 +531,8 @@ body {
 }
 .settings-toggle.on::after { transform: translateX(18px); }
 .settings-section-title { font-size: 11px; color: var(--purple-holo); font-weight: 600; text-transform: uppercase; letter-spacing: 1px; margin-top: 4px; }
-.seq-item { display: flex; justify-content: space-between; align-items: center; padding: 8px; background: var(--dark-card-light); border-radius: 8px; font-size: 12px; color: var(--pale-cyan); }
+.seq-item { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px; background: var(--dark-card-light); border-radius: 8px; font-size: 12px; color: var(--pale-cyan); }
+.seq-item-steps { display: block; margin-top: 3px; font-size: 10px; color: rgba(207,245,255,0.45); }
 .seq-item-delete { background: none; border: none; color: #ef4444; cursor: pointer; font-size: 14px; }
 .seq-builder { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; padding: 10px; border: 1px solid rgba(0,240,255,0.1); border-radius: 10px; }
 .seq-builder input { padding: 7px; border: 1px solid var(--dark-border); border-radius: 6px; background: var(--deep-black); color: var(--pale-cyan); font-size: 12px; width: 100%; }
@@ -542,7 +543,41 @@ body {
   border-radius: 6px; background: var(--deep-black);
   color: #aaa; font-size: 10px; cursor: pointer; transition: all 0.2s;
 }
-.seq-step-btn.selected { border-color: var(--purple-holo); color: var(--purple-holo); background: rgba(182,155,255,0.1); }
+.seq-step-btn:hover { border-color: var(--purple-holo); color: var(--purple-holo); background: rgba(182,155,255,0.1); }
+
+/* Custom step entry — label + duration + add */
+.seq-custom-row { display: flex; gap: 6px; align-items: center; }
+.seq-builder .seq-custom-label { flex: 1 1 auto; width: auto; }
+.seq-builder .seq-custom-duration { flex: 0 0 84px; width: 84px; text-align: center; }
+.seq-custom-add {
+  flex: 0 0 auto; padding: 7px 10px; border: 1px solid var(--purple-holo);
+  border-radius: 6px; background: rgba(182,155,255,0.1);
+  color: var(--purple-holo); font-size: 11px; font-weight: 600; cursor: pointer;
+  transition: all 0.2s;
+}
+.seq-custom-add:hover { background: rgba(182,155,255,0.22); }
+
+/* Ordered list of the steps built so far */
+.seq-order-list { display: flex; flex-direction: column; gap: 4px; }
+.seq-order-item {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 7px; border-radius: 6px;
+  background: var(--dark-card-light); font-size: 11px; color: var(--pale-cyan);
+}
+.seq-order-index { flex: 0 0 16px; color: rgba(207,245,255,0.4); font-size: 10px; }
+.seq-order-label { flex: 1 1 auto; display: flex; align-items: center; gap: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.seq-order-tag {
+  padding: 1px 5px; border-radius: 4px; background: rgba(182,155,255,0.14);
+  color: var(--purple-holo); font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px;
+}
+.seq-order-duration { flex: 0 0 auto; color: var(--cyan-glow); font-size: 11px; }
+.seq-order-btn {
+  background: none; border: none; color: rgba(207,245,255,0.55);
+  cursor: pointer; font-size: 11px; padding: 0 2px;
+}
+.seq-order-btn:hover:not(:disabled) { color: var(--cyan-glow); }
+.seq-order-btn:disabled { opacity: 0.25; cursor: default; }
+.seq-order-total { text-align: right; font-size: 10px; color: var(--purple-holo); }
 .seq-loop-row { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--pale-cyan); }
 .seq-add-btn {
   padding: 8px; border: none; border-radius: 8px;

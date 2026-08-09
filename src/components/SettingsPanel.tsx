@@ -1,5 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { useTimerStore, Sequence, Settings, CustomSound, HistoryItem, Stats, StopwatchSession, DEFAULT_SETTINGS, WARNING_MARKS_SECONDS } from '../store/timerStore';
+import {
+  useTimerStore, Sequence, SequenceStep, Settings, CustomSound, HistoryItem, Stats,
+  StopwatchSession, DEFAULT_SETTINGS, WARNING_MARKS_SECONDS,
+  isCustomStep, sequenceStepLabel, sequenceStepSeconds,
+} from '../store/timerStore';
 import { resolveSound } from '../audio/soundPlayer';
 import { SOUND_MAP, SOUND_LABELS } from '../utils/constants';
 
@@ -17,6 +21,30 @@ const STEP_OPTIONS = [
   { key: 'longBreak',  label: '🌙 Long Break'  },
   { key: 'deepWork',   label: '🎯 Deep Work'   },
 ] as const;
+
+const MIN_STEP_SECONDS = 5;
+const MAX_STEP_SECONDS = 8 * 3600;
+
+/** Accepts plain minutes ("25") or mm:ss ("1:30"). Returns null if neither. */
+function parseStepDuration(raw: string): number | null {
+  const t = raw.trim();
+  let seconds: number | null = null;
+
+  if (/^\d+(\.\d+)?$/.test(t)) {
+    seconds = Math.round(parseFloat(t) * 60);
+  } else {
+    const m = t.match(/^(\d+):([0-5]?\d)$/);
+    if (m) seconds = parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+  }
+
+  if (seconds === null || seconds < MIN_STEP_SECONDS) return null;
+  return Math.min(MAX_STEP_SECONDS, seconds);
+}
+
+function fmtStepDuration(seconds: number): string {
+  if (seconds % 60 === 0) return `${seconds / 60}m`;
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+}
 
 export const SettingsPanel: React.FC<Props> = ({ onClose }) => {
   const {
@@ -36,8 +64,10 @@ export const SettingsPanel: React.FC<Props> = ({ onClose }) => {
 
   // Sequence builder
   const [seqName, setSeqName] = useState('');
-  const [seqSteps, setSeqSteps] = useState<string[]>([]);
+  const [seqSteps, setSeqSteps] = useState<SequenceStep[]>([]);
   const [seqLoop, setSeqLoop] = useState(false);
+  const [customLabel, setCustomLabel] = useState('');
+  const [customDuration, setCustomDuration] = useState('');
 
   const previewTimeout = useRef<any>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -184,10 +214,35 @@ export const SettingsPanel: React.FC<Props> = ({ onClose }) => {
     setRenameDraft('');
   };
 
-  const toggleStep = (key: string) => {
-    setSeqSteps((prev) =>
-      prev.includes(key) ? prev.filter((s) => s !== key) : [...prev, key]
-    );
+  // Presets append rather than toggle — a sequence is an ordered list, so
+  // "focus, break, focus, break" has to be expressible.
+  const appendPresetStep = (key: Sequence['steps'][number]) => {
+    setSeqSteps((prev) => [...prev, key]);
+  };
+
+  const addCustomStep = () => {
+    const seconds = parseStepDuration(customDuration);
+    if (seconds === null) {
+      showToast('Enter a duration like 25 or 1:30');
+      return;
+    }
+    setSeqSteps((prev) => [...prev, { label: customLabel.trim() || 'Custom', seconds }]);
+    setCustomLabel('');
+    setCustomDuration('');
+  };
+
+  const removeStep = (idx: number) => {
+    setSeqSteps((prev) => prev.filter((_, i) => i !== idx));
+  };
+
+  const moveStep = (idx: number, delta: number) => {
+    setSeqSteps((prev) => {
+      const target = idx + delta;
+      if (target < 0 || target >= prev.length) return prev;
+      const next = [...prev];
+      [next[idx], next[target]] = [next[target], next[idx]];
+      return next;
+    });
   };
 
   const addSequence = () => {
@@ -196,12 +251,22 @@ export const SettingsPanel: React.FC<Props> = ({ onClose }) => {
     const newSeq: Sequence = {
       id: Date.now().toString(),
       name: seqName.trim(),
-      steps: seqSteps as Sequence['steps'],
+      steps: seqSteps,
       loop: seqLoop,
     };
     setSequences([...sequences, newSeq]);
     setSeqName(''); setSeqSteps([]); setSeqLoop(false);
+    setCustomLabel(''); setCustomDuration('');
     showToast('Sequence added ✓');
+  };
+
+  const sequenceTotalSeconds = (steps: SequenceStep[]) =>
+    steps.reduce((acc, step) => acc + sequenceStepSeconds(step, settings), 0);
+
+  const fmtTotal = (seconds: number) => {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.round((seconds % 3600) / 60);
+    return h > 0 ? `${h}h ${m}m` : `${m}m`;
   };
 
   const deleteSequence = (id: string) => {
@@ -441,7 +506,15 @@ export const SettingsPanel: React.FC<Props> = ({ onClose }) => {
                 <div className="settings-section-title">Saved Sequences</div>
                 {sequences.map((s) => (
                   <div className="seq-item" key={s.id}>
-                    <span>{s.name} ({s.steps.length} steps){s.loop ? ' 🔁' : ''}</span>
+                    <span>
+                      {s.name} ({s.steps.length} steps · {fmtTotal(sequenceTotalSeconds(s.steps))})
+                      {s.loop ? ' 🔁' : ''}
+                      <span className="seq-item-steps">
+                        {s.steps
+                          .map((step) => `${sequenceStepLabel(step)} ${fmtStepDuration(sequenceStepSeconds(step, settings))}`)
+                          .join(' → ')}
+                      </span>
+                    </span>
                     <button className="seq-item-delete" onClick={() => deleteSequence(s.id)}>🗑</button>
                   </div>
                 ))}
@@ -451,20 +524,63 @@ export const SettingsPanel: React.FC<Props> = ({ onClose }) => {
             <div className="settings-section-title" style={{ marginTop: 12 }}>Create Sequence</div>
             <div className="seq-builder">
               <input placeholder="Sequence name" value={seqName} onChange={(e) => setSeqName(e.target.value)} />
+
+              {/* Your own step: any label, any length. */}
+              <div className="seq-custom-row">
+                <input
+                  className="seq-custom-label"
+                  placeholder="Step name (e.g. Reading)"
+                  value={customLabel}
+                  onChange={(e) => setCustomLabel(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') addCustomStep(); }}
+                />
+                <input
+                  className="seq-custom-duration"
+                  placeholder="25 or 1:30"
+                  value={customDuration}
+                  onChange={(e) => setCustomDuration(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') addCustomStep(); }}
+                />
+                <button className="seq-custom-add" onClick={addCustomStep}>+ Step</button>
+              </div>
+              <div className="settings-hint" style={{ marginTop: 0 }}>
+                Minutes, or mm:ss for anything under a minute.
+              </div>
+
+              {/* Presets stay available as shortcuts — each click appends one. */}
               <div className="seq-steps-selector">
                 {STEP_OPTIONS.map((o) => (
                   <button
                     key={o.key}
-                    className={`seq-step-btn${seqSteps.includes(o.key) ? ' selected' : ''}`}
-                    onClick={() => toggleStep(o.key)}
+                    className="seq-step-btn"
+                    onClick={() => appendPresetStep(o.key)}
+                    title={`Add ${settings.presets[o.key]} min step (follows your preset)`}
                   >
-                    {o.label}
+                    + {o.label}
                   </button>
                 ))}
               </div>
+
               {seqSteps.length > 0 && (
-                <div style={{ fontSize: 11, color: 'var(--purple-holo)' }}>
-                  Order: {seqSteps.map((s) => STEP_OPTIONS.find((o: any) => o.key === s)?.label).join(' → ')}
+                <div className="seq-order-list">
+                  {seqSteps.map((step, i) => (
+                    <div className="seq-order-item" key={i}>
+                      <span className="seq-order-index">{i + 1}</span>
+                      <span className="seq-order-label">
+                        {sequenceStepLabel(step)}
+                        {!isCustomStep(step) && <span className="seq-order-tag">preset</span>}
+                      </span>
+                      <span className="seq-order-duration">
+                        {fmtStepDuration(sequenceStepSeconds(step, settings))}
+                      </span>
+                      <button className="seq-order-btn" onClick={() => moveStep(i, -1)} disabled={i === 0} title="Move up">↑</button>
+                      <button className="seq-order-btn" onClick={() => moveStep(i, 1)} disabled={i === seqSteps.length - 1} title="Move down">↓</button>
+                      <button className="seq-item-delete" onClick={() => removeStep(i)} title="Remove step">×</button>
+                    </div>
+                  ))}
+                  <div className="seq-order-total">
+                    Total {fmtTotal(sequenceTotalSeconds(seqSteps))}
+                  </div>
                 </div>
               )}
               <div className="seq-loop-row">

@@ -36,6 +36,25 @@ export interface RustTimerState {
 export type StepKey = 'pomodoro' | 'shortBreak' | 'longBreak' | 'deepWork';
 
 /**
+ * A step that carries its own duration instead of borrowing one from a preset.
+ * Sequences hold a mix of these and preset keys, so "25 min focus / 4 min stand
+ * up / 12 min reading" is expressible without inventing a preset for each part.
+ */
+export interface CustomStep {
+  label: string;
+  seconds: number;
+  /** Falls back to the user's default tone when unset. */
+  sound?: string;
+}
+
+/** A saved sequence step: a preset key, or a hand-entered duration. */
+export type SequenceStep = StepKey | CustomStep;
+
+export function isCustomStep(step: SequenceStep): step is CustomStep {
+  return typeof step === 'object' && step !== null;
+}
+
+/**
  * A sequence step with its duration and tone already decided. The engine stores
  * these verbatim, so a running sequence can't be reshaped by a later preset edit.
  */
@@ -68,7 +87,7 @@ export interface Stats {
 export interface Sequence {
   id: string;
   name: string;
-  steps: StepKey[];
+  steps: SequenceStep[];
   loop: boolean;
 }
 
@@ -111,19 +130,35 @@ const STEP_SOUNDS: Record<StepKey, string> = {
   longBreak:  'water',
 };
 
-/** Turn a saved preset-based sequence into concrete steps using current settings. */
+/** Duration of a saved step in seconds — preset steps read the current settings. */
+export function sequenceStepSeconds(step: SequenceStep, settings: Settings): number {
+  if (isCustomStep(step)) return Math.max(1, Math.round(step.seconds));
+  return Math.max(1, Math.round((settings.presets[step] ?? 25) * 60));
+}
+
+/** Display name of a saved step, without the emoji the UI layers add. */
+export function sequenceStepLabel(step: SequenceStep): string {
+  if (isCustomStep(step)) return step.label.trim() || 'Step';
+  return STEP_LABELS[step] ?? step;
+}
+
+/** Turn a saved sequence into concrete steps using current settings. */
 export function resolveSequenceSteps(sequence: Sequence, settings: Settings): ResolvedStep[] {
-  return sequence.steps
-    .filter((key): key is StepKey => key in STEP_LABELS)
-    .map((key) => {
-      const label = STEP_LABELS[key];
-      return {
-        label,
-        seconds: Math.max(1, Math.round((settings.presets[key] ?? 25) * 60)),
-        sound: STEP_SOUNDS[key],
-        notification: `${label} complete!`,
-      };
-    });
+  return sequence.steps.flatMap((step) => {
+    // Skip anything unrecognisable rather than starting a sequence with a hole
+    // in it — old backups and hand-edited state files both land here.
+    if (!isCustomStep(step) && !(step in STEP_LABELS)) return [];
+
+    const label = sequenceStepLabel(step);
+    return [{
+      label,
+      seconds: sequenceStepSeconds(step, settings),
+      sound: isCustomStep(step)
+        ? step.sound ?? settings.defaultSound
+        : STEP_SOUNDS[step],
+      notification: `${label} complete!`,
+    }];
+  });
 }
 
 // ─── Store interface ──────────────────────────────────────────────────────────
