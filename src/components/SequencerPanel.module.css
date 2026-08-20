@@ -371,28 +371,199 @@
 
 .typeDot:hover { transform: scale(1.35); }
 
-/* Label input */
-.labelInput {
+/* Phase row summary display */
+.phaseRowLabel {
   flex: 1;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 5px;
-  color: rgba(207, 245, 255, 0.85);
   font-size: 12px;
-  padding: 3px 5px;
-  transition: border-color 0.18s;
+  color: rgba(207, 245, 255, 0.85);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   min-width: 0;
-  font-family: inherit;
 }
 
-.labelInput:hover  { border-color: rgba(180, 100, 220, 0.35); }
-.labelInput:focus  { border-color: rgba(147, 51, 234, 0.55); outline: none; }
-.labelInput::placeholder { color: rgba(255, 255, 255, 0.2); }
+.phaseRowDuration {
+  font-size: 10px;
+  font-family: monospace;
+  color: rgba(207, 245, 255, 0.4);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
 
-/* ±5 buttons */
-.adjBtn {
-  width: 26px;
+/* Edit toggle button */
+.editToggleBtn {
+  width: 22px;
   height: 22px;
+  border-radius: 5px;
+  border: 1px solid rgba(180, 100, 220, 0.22);
+  background: rgba(180, 100, 220, 0.05);
+  color: rgba(180, 100, 220, 0.55);
+  font-size: 13px;
+  cursor: pointer;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: all 0.15s;
+  line-height: 1;
+}
+
+.editToggleBtn:hover {
+  border-color: rgba(147, 51, 234, 0.6);
+  background: rgba(147, 51, 234, 0.13);
+  color: rgba(180, 100, 220, 1);
+}
+
+.editToggleBtnActive {
+  border-color: rgba(147, 51, 234, 0.55);
+  background: rgba(147, 51, 234, 0.12);
+  color: rgba(207, 245, 255, 0.9);
+}
+
+.phaseRowExpanded {
+  border-color: rgba(147, 51, 234, 0.45) !important;
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+/* Expanded inline editor panel */
+.phaseEditor {
+  background: rgba(20, 8, 40, 0.7);
+  border: 1px solid rgba(147, 51, 234, 0.35);
+  border-top: none;
+  border-bottom-left-radius: 8px;
+  border-bottom-right-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  animation: editorSlideIn 0.18s ease;
+}
+
+@keyframes editorSlideIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.editorField {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.editorFieldLabel {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  color: rgba(180, 100, 220, 0.6);
+  font-weight: 600;
+}
+
+.editorInput {
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(147, 51, 234, 0.3);
+  border-radius: 6px;
+  color: rgba(207, 245, 255, 0.9);
+  font-size: 12px;
+  padding: 5px 8px;
+  transition: border-color 0.18s;
+  font-family: inherit;
+  outline: none;
+}
+
+.editorInput:focus {
+  border-color: rgba(147, 51, 234, 0.7);
+  box-shadow: 0 0 0 2px rgba(147, 51, 234, 0.12);
+}
+
+.editorInput::placeholder { color: rgba(255, 255, 255, 0.2); }
+
+.editorDurationRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.editorDurationBadge {
+  flex: 1;
+  font-size: 13px;
+  font-family: monospace;
+  color: rgba(207, 245, 255, 0.8);
+  text-align: center;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px dashed rgba(147, 51, 234, 0.35);
+  transition: all 0.15s;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.editorDurationBadge:hover {
+  border-color: rgba(147, 51, 234, 0.65);
+  color: rgba(207, 245, 255, 1);
+  background: rgba(147, 51, 234, 0.08);
+}
+
+.editorDurationInput {
+  flex: 1;
+  font-size: 13px;
+  font-family: monospace;
+  color: rgba(207, 245, 255, 0.95);
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(147, 51, 234, 0.6);
+  border-radius: 6px;
+  padding: 4px 8px;
+  text-align: center;
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(147, 51, 234, 0.12);
+}
+
+/* Type group selector */
+.typeGroup {
+  display: flex;
+  gap: 5px;
+}
+
+.typeGroupBtn {
+  flex: 1;
+  padding: 5px 6px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.03);
+  color: rgba(207, 245, 255, 0.5);
+  font-size: 10px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  transition: all 0.15s;
+  font-family: inherit;
+  text-transform: capitalize;
+  letter-spacing: 0.3px;
+}
+
+.typeGroupBtn:hover {
+  background: rgba(255, 255, 255, 0.07);
+  color: rgba(207, 245, 255, 0.85);
+}
+
+.typeGroupBtnActive {
+  font-weight: 600;
+}
+
+.typeGroupDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* ±5 buttons (reused in editor) */
+.adjBtn {
+  height: 26px;
+  padding: 0 8px;
   border-radius: 5px;
   border: 1px solid rgba(180, 100, 220, 0.22);
   background: rgba(180, 100, 220, 0.05);
@@ -403,49 +574,15 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 0;
   transition: all 0.15s;
   font-family: inherit;
+  white-space: nowrap;
 }
 
 .adjBtn:hover {
   border-color: rgba(147, 51, 234, 0.55);
   background: rgba(147, 51, 234, 0.13);
   color: rgba(207, 245, 255, 1);
-}
-
-/* Duration display */
-.durationDisplay {
-  font-size: 11px;
-  font-family: monospace;
-  color: rgba(207, 245, 255, 0.55);
-  min-width: 34px;
-  text-align: center;
-  cursor: pointer;
-  padding: 2px 4px;
-  border-radius: 4px;
-  border: 1px solid transparent;
-  transition: border-color 0.15s;
-  white-space: nowrap;
-}
-
-.durationDisplay:hover {
-  border-color: rgba(180, 100, 220, 0.35);
-  color: rgba(207, 245, 255, 0.8);
-}
-
-/* Duration inline edit input */
-.durationInput {
-  font-size: 11px;
-  font-family: monospace;
-  color: rgba(207, 245, 255, 0.9);
-  width: 46px;
-  background: rgba(0, 0, 0, 0.35);
-  border: 1px solid rgba(147, 51, 234, 0.5);
-  border-radius: 4px;
-  padding: 2px 4px;
-  text-align: center;
-  outline: none;
 }
 
 /* Remove button */

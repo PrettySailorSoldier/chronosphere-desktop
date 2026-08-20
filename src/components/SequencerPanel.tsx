@@ -160,6 +160,7 @@ export function SequencerPanel() {
   const [editingDurVal, setEditingDurVal] = useState('');
   const [dragOverIdx,   setDragOverIdx]   = useState<number | null>(null);
   const [newPhaseId,    setNewPhaseId]    = useState<string | null>(null);
+  const [expandedEditId, setExpandedEditId] = useState<string | null>(null);
 
   // ── Refs ────────────────────────────────────────────────────────────────────
   const storeRef     = useRef<Awaited<ReturnType<typeof load>> | null>(null);
@@ -281,6 +282,18 @@ export function SequencerPanel() {
       return next;
     });
   }, [saveToStore]);
+
+  const handleTypeSet = useCallback((id: string, type: Phase['type']) => {
+    setPhases(prev => {
+      const next = prev.map(p => p.id === id ? { ...p, type } : p);
+      saveToStore(next);
+      return next;
+    });
+  }, [saveToStore]);
+
+  const handleToggleExpand = useCallback((id: string) => {
+    setExpandedEditId(prev => prev === id ? null : id);
+  }, []);
 
   const handleAdjust = useCallback((id: string, delta: number) => {
     // If this is the phase in flight, push the change through to the engine so
@@ -592,13 +605,16 @@ export function SequencerPanel() {
             <span className={styles.insertBetweenLine} />
           </button>
 
-          {phases.map((phase, i) => (
+          {phases.map((phase, i) => {
+            const isExpanded = expandedEditId === phase.id;
+            return (
             <div key={phase.id}>
               <div
                 className={[
                   styles.phaseRow,
                   i === activeIdx ? styles.activePhaseRow : '',
                   dragOverIdx === i ? styles.dragOver : '',
+                  isExpanded ? styles.phaseRowExpanded : '',
                 ].filter(Boolean).join(' ')}
                 draggable={!started}
                 onDragStart={() => handleDragStart(i)}
@@ -630,56 +646,23 @@ export function SequencerPanel() {
                   title={`Type: ${phase.type} (click to cycle)`}
                 />
 
-                {/* Label */}
-                <input
-                  ref={phase.id === newPhaseId
-                    ? (el) => { if (el) { el.focus(); setNewPhaseId(null); } }
-                    : undefined}
-                  className={styles.labelInput}
-                  value={phase.label}
-                  placeholder="Phase name…"
-                  onChange={e => handleLabelChange(phase.id, e.target.value)}
-                />
+                {/* Label — summary read-only display when collapsed */}
+                <span className={styles.phaseRowLabel}>
+                  {phase.label || <span style={{ opacity: 0.35 }}>unnamed</span>}
+                </span>
 
-                {/* −5 min */}
+                {/* Duration badge */}
+                <span className={styles.phaseRowDuration}>
+                  {fmtDuration(phase.durationSeconds)}
+                </span>
+
+                {/* Edit toggle */}
                 <button
-                  className={styles.adjBtn}
-                  onClick={() => handleAdjust(phase.id, -300)}
-                  title="−5 min"
+                  className={[styles.editToggleBtn, isExpanded ? styles.editToggleBtnActive : ''].filter(Boolean).join(' ')}
+                  onClick={() => handleToggleExpand(phase.id)}
+                  title={isExpanded ? 'Close editor' : 'Edit phase'}
                 >
-                  −5
-                </button>
-
-                {/* Duration display / inline edit */}
-                {editingDurId === phase.id ? (
-                  <input
-                    className={styles.durationInput}
-                    value={editingDurVal}
-                    onChange={e => setEditingDurVal(e.target.value)}
-                    onBlur={() => handleDurCommit(phase.id)}
-                    onKeyDown={e => {
-                      if (e.key === 'Enter') handleDurCommit(phase.id);
-                      if (e.key === 'Escape') { setEditingDurId(null); setEditingDurVal(''); }
-                    }}
-                    autoFocus
-                  />
-                ) : (
-                  <span
-                    className={styles.durationDisplay}
-                    onClick={() => handleDurClick(phase.id, phase.durationSeconds)}
-                    title="Click to edit duration"
-                  >
-                    {fmtDuration(phase.durationSeconds)}
-                  </span>
-                )}
-
-                {/* +5 min */}
-                <button
-                  className={styles.adjBtn}
-                  onClick={() => handleAdjust(phase.id, 300)}
-                  title="+5 min"
-                >
-                  +5
+                  {isExpanded ? '✕' : '✎'}
                 </button>
 
                 {/* Remove */}
@@ -692,6 +675,91 @@ export function SequencerPanel() {
                 </button>
               </div>
 
+              {/* ── Expanded inline editor ── */}
+              {isExpanded && (
+                <div className={styles.phaseEditor}>
+                  {/* Name */}
+                  <div className={styles.editorField}>
+                    <label className={styles.editorFieldLabel}>Name</label>
+                    <input
+                      ref={phase.id === newPhaseId
+                        ? (el) => { if (el) { el.focus(); setNewPhaseId(null); } }
+                        : undefined}
+                      className={styles.editorInput}
+                      value={phase.label}
+                      placeholder="Phase name…"
+                      onChange={e => handleLabelChange(phase.id, e.target.value)}
+                      autoFocus={phase.id !== newPhaseId}
+                    />
+                  </div>
+
+                  {/* Duration */}
+                  <div className={styles.editorField}>
+                    <label className={styles.editorFieldLabel}>Duration</label>
+                    <div className={styles.editorDurationRow}>
+                      <button
+                        className={styles.adjBtn}
+                        onClick={() => handleAdjust(phase.id, -300)}
+                        title="−5 min"
+                      >−5m</button>
+
+                      {editingDurId === phase.id ? (
+                        <input
+                          className={styles.editorDurationInput}
+                          value={editingDurVal}
+                          onChange={e => setEditingDurVal(e.target.value)}
+                          onBlur={() => handleDurCommit(phase.id)}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') handleDurCommit(phase.id);
+                            if (e.key === 'Escape') { setEditingDurId(null); setEditingDurVal(''); }
+                          }}
+                          autoFocus
+                          placeholder="e.g. 25 or 1:30"
+                        />
+                      ) : (
+                        <span
+                          className={styles.editorDurationBadge}
+                          onClick={() => handleDurClick(phase.id, phase.durationSeconds)}
+                          title="Click to type a duration"
+                        >
+                          {fmtDuration(phase.durationSeconds)}
+                        </span>
+                      )}
+
+                      <button
+                        className={styles.adjBtn}
+                        onClick={() => handleAdjust(phase.id, 300)}
+                        title="+5 min"
+                      >+5m</button>
+                    </div>
+                  </div>
+
+                  {/* Type */}
+                  <div className={styles.editorField}>
+                    <label className={styles.editorFieldLabel}>Type</label>
+                    <div className={styles.typeGroup}>
+                      {TYPE_CYCLE.map(t => (
+                        <button
+                          key={t}
+                          className={[
+                            styles.typeGroupBtn,
+                            phase.type === t ? styles.typeGroupBtnActive : '',
+                          ].filter(Boolean).join(' ')}
+                          style={phase.type === t ? { borderColor: TYPE_COLORS[t], color: TYPE_COLORS[t], background: `${TYPE_COLORS[t]}22` } : {}}
+                          onClick={() => handleTypeSet(phase.id, t)}
+                        >
+                          <span
+                            className={styles.typeGroupDot}
+                            style={{ background: TYPE_COLORS[t] }}
+                          />
+                          {t}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Insert-between button — appears after every row */}
               <button
                 className={styles.insertBetweenBtn}
@@ -703,7 +771,8 @@ export function SequencerPanel() {
                 <span className={styles.insertBetweenLine} />
               </button>
             </div>
-          ))}
+            );
+          })}
         </div>
 
         {/* Append phase at end */}

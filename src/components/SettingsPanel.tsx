@@ -68,6 +68,9 @@ export const SettingsPanel: React.FC<Props> = ({ onClose }) => {
   const [seqLoop, setSeqLoop] = useState(false);
   const [customLabel, setCustomLabel] = useState('');
   const [customDuration, setCustomDuration] = useState('');
+  const [draftRestored, setDraftRestored] = useState(false);
+
+  const DRAFT_KEY = 'chronosphere_seq_draft';
 
   const previewTimeout = useRef<any>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -88,6 +91,32 @@ export const SettingsPanel: React.FC<Props> = ({ onClose }) => {
       }
     };
   }, []);
+
+  // ── Restore sequence draft on mount ─────────────────────────────────────
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(DRAFT_KEY);
+      if (saved) {
+        const draft = JSON.parse(saved);
+        if (draft.seqName)  setSeqName(draft.seqName);
+        if (draft.seqSteps?.length) setSeqSteps(draft.seqSteps);
+        if (draft.seqLoop)  setSeqLoop(draft.seqLoop);
+      }
+    } catch { /* ignore corrupt draft */ }
+    setDraftRestored(true);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── Autosave draft whenever it changes (after initial restore) ───────────
+  useEffect(() => {
+    if (!draftRestored) return;
+    const hasDraft = seqName.trim() || seqSteps.length > 0;
+    if (hasDraft) {
+      localStorage.setItem(DRAFT_KEY, JSON.stringify({ seqName, seqSteps, seqLoop }));
+    } else {
+      localStorage.removeItem(DRAFT_KEY);
+    }
+  }, [seqName, seqSteps, seqLoop, draftRestored]);
 
   const saveSettings = () => {
     const updated: Settings = {
@@ -257,7 +286,15 @@ export const SettingsPanel: React.FC<Props> = ({ onClose }) => {
     setSequences([...sequences, newSeq]);
     setSeqName(''); setSeqSteps([]); setSeqLoop(false);
     setCustomLabel(''); setCustomDuration('');
+    localStorage.removeItem(DRAFT_KEY); // clear autosaved draft
     showToast('Sequence added ✓');
+  };
+
+  const discardDraft = () => {
+    setSeqName(''); setSeqSteps([]); setSeqLoop(false);
+    setCustomLabel(''); setCustomDuration('');
+    localStorage.removeItem(DRAFT_KEY);
+    showToast('Draft discarded');
   };
 
   const sequenceTotalSeconds = (steps: SequenceStep[]) =>
@@ -522,6 +559,39 @@ export const SettingsPanel: React.FC<Props> = ({ onClose }) => {
             )}
 
             <div className="settings-section-title" style={{ marginTop: 12 }}>Create Sequence</div>
+
+            {/* Draft restored banner */}
+            {draftRestored && (seqName.trim() || seqSteps.length > 0) && (
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '6px 10px',
+                marginBottom: 8,
+                background: 'rgba(251,191,36,0.08)',
+                border: '1px solid rgba(251,191,36,0.3)',
+                borderRadius: 7,
+                fontSize: 11,
+                color: 'rgba(251,191,36,0.9)',
+              }}>
+                <span style={{ flex: 1 }}>✦ Draft restored — your unsaved sequence is back.</span>
+                <button
+                  onClick={discardDraft}
+                  style={{
+                    background: 'none',
+                    border: '1px solid rgba(251,191,36,0.4)',
+                    borderRadius: 5,
+                    color: 'rgba(251,191,36,0.75)',
+                    fontSize: 10,
+                    padding: '2px 7px',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Discard
+                </button>
+              </div>
+            )}
+
             <div className="seq-builder">
               <input placeholder="Sequence name" value={seqName} onChange={(e) => setSeqName(e.target.value)} />
 
