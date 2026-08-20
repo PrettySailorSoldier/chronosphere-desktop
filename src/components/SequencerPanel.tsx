@@ -327,6 +327,25 @@ export function SequencerPanel() {
     });
   }, [saveToStore]);
 
+  // Insert a new blank phase at the given index.
+  // If the sequence is running and the user inserts before/at the active step,
+  // the engine's immutable step list is now out of sync — we have to stop it.
+  const handleInsertAt = useCallback((insertIdx: number) => {
+    const activeI = activeIdxRef.current;
+    if (activeI !== null && insertIdx <= activeI) {
+      if (!window.confirm('Inserting before the current phase will stop the running sequence. Continue?')) return;
+      void useTimerStore.getState().stop();
+    }
+    const id = genId();
+    setNewPhaseId(id);
+    setPhases(prev => {
+      const next = [...prev];
+      next.splice(insertIdx, 0, { id, label: '', durationSeconds: 300, type: 'work' as const });
+      saveToStore(next);
+      return next;
+    });
+  }, [saveToStore]);
+
   const handleTemplate = useCallback((key: string) => {
     const template = TEMPLATES[key];
     if (!template) return;
@@ -483,6 +502,17 @@ export function SequencerPanel() {
 
       {/* ── SECTION 3: Controls ── */}
       <div className={styles.controls}>
+        {/* Live ±5 min adjust buttons — only shown while a phase is active */}
+        {(running || paused) && activePhase && (
+          <button
+            className={styles.liveAdjBtn}
+            onClick={() => handleAdjust(activePhase.id, -300)}
+            title="−5 min from current phase"
+          >
+            −5m
+          </button>
+        )}
+
         <button
           className={styles.primaryBtn}
           onClick={running ? handlePause : handleStart}
@@ -506,6 +536,17 @@ export function SequencerPanel() {
         >
           ↺ Reset
         </button>
+
+        {/* Live +5 min */}
+        {(running || paused) && activePhase && (
+          <button
+            className={styles.liveAdjBtn}
+            onClick={() => handleAdjust(activePhase.id, 300)}
+            title="+5 min to current phase"
+          >
+            +5m
+          </button>
+        )}
       </div>
 
       {/* ── SECTION 4 + 5: Phase Editor ── */}
@@ -532,116 +573,142 @@ export function SequencerPanel() {
             than letting edits look like they apply to the run in progress. */}
         {started && (
           <div className={styles.sectionLabel} style={{ opacity: 0.7, textTransform: 'none' }}>
-            Edits apply to the next run — except ±5 on the phase now playing.
+            Duration edits apply to the next run — except ±5 on the playing phase.
+            You can insert phases at any position; inserting before the current phase will stop the run.
           </div>
         )}
 
         {/* Phase rows */}
         <div className={styles.phaseList}>
+
+          {/* Insert-at-top button */}
+          <button
+            className={styles.insertBetweenBtn}
+            onClick={() => handleInsertAt(0)}
+            title="Insert phase at the beginning"
+          >
+            <span className={styles.insertBetweenLine} />
+            <span className={styles.insertBetweenPlus}>+ insert</span>
+            <span className={styles.insertBetweenLine} />
+          </button>
+
           {phases.map((phase, i) => (
-            <div
-              key={phase.id}
-              className={[
-                styles.phaseRow,
-                dragOverIdx === i ? styles.dragOver : '',
-              ].filter(Boolean).join(' ')}
-              draggable={!started}
-              onDragStart={() => handleDragStart(i)}
-              onDragOver={e => handleDragOver(e, i)}
-              onDrop={() => handleDrop(i)}
-              onDragLeave={() => setDragOverIdx(null)}
-              onDragEnd={() => { setDragOverIdx(null); dragIdxRef.current = null; }}
-            >
-              {/* Drag handle */}
-              <span
-                className={[styles.dragHandle, started ? styles.disabledHandle : ''].filter(Boolean).join(' ')}
-                aria-hidden="true"
+            <div key={phase.id}>
+              <div
+                className={[
+                  styles.phaseRow,
+                  i === activeIdx ? styles.activePhaseRow : '',
+                  dragOverIdx === i ? styles.dragOver : '',
+                ].filter(Boolean).join(' ')}
+                draggable={!started}
+                onDragStart={() => handleDragStart(i)}
+                onDragOver={e => handleDragOver(e, i)}
+                onDrop={() => handleDrop(i)}
+                onDragLeave={() => setDragOverIdx(null)}
+                onDragEnd={() => { setDragOverIdx(null); dragIdxRef.current = null; }}
               >
-                <svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor">
-                  <circle cx="3" cy="2.5"  r="1.2" />
-                  <circle cx="7" cy="2.5"  r="1.2" />
-                  <circle cx="3" cy="7"    r="1.2" />
-                  <circle cx="7" cy="7"    r="1.2" />
-                  <circle cx="3" cy="11.5" r="1.2" />
-                  <circle cx="7" cy="11.5" r="1.2" />
-                </svg>
-              </span>
-
-              {/* Type dot — click cycles work → break → transition */}
-              <button
-                className={styles.typeDot}
-                style={{ background: TYPE_COLORS[phase.type] }}
-                onClick={() => handleTypeClick(phase.id)}
-                title={`Type: ${phase.type} (click to cycle)`}
-              />
-
-              {/* Label */}
-              <input
-                ref={phase.id === newPhaseId
-                  ? (el) => { if (el) { el.focus(); setNewPhaseId(null); } }
-                  : undefined}
-                className={styles.labelInput}
-                value={phase.label}
-                placeholder="Phase name…"
-                onChange={e => handleLabelChange(phase.id, e.target.value)}
-              />
-
-              {/* −5 min */}
-              <button
-                className={styles.adjBtn}
-                onClick={() => handleAdjust(phase.id, -300)}
-                title="−5 min"
-              >
-                −5
-              </button>
-
-              {/* Duration display / inline edit */}
-              {editingDurId === phase.id ? (
-                <input
-                  className={styles.durationInput}
-                  value={editingDurVal}
-                  onChange={e => setEditingDurVal(e.target.value)}
-                  onBlur={() => handleDurCommit(phase.id)}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter') handleDurCommit(phase.id);
-                    if (e.key === 'Escape') { setEditingDurId(null); setEditingDurVal(''); }
-                  }}
-                  autoFocus
-                />
-              ) : (
+                {/* Drag handle */}
                 <span
-                  className={styles.durationDisplay}
-                  onClick={() => handleDurClick(phase.id, phase.durationSeconds)}
-                  title="Click to edit duration"
+                  className={[styles.dragHandle, started ? styles.disabledHandle : ''].filter(Boolean).join(' ')}
+                  aria-hidden="true"
                 >
-                  {fmtDuration(phase.durationSeconds)}
+                  <svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor">
+                    <circle cx="3" cy="2.5"  r="1.2" />
+                    <circle cx="7" cy="2.5"  r="1.2" />
+                    <circle cx="3" cy="7"    r="1.2" />
+                    <circle cx="7" cy="7"    r="1.2" />
+                    <circle cx="3" cy="11.5" r="1.2" />
+                    <circle cx="7" cy="11.5" r="1.2" />
+                  </svg>
                 </span>
-              )}
 
-              {/* +5 min */}
-              <button
-                className={styles.adjBtn}
-                onClick={() => handleAdjust(phase.id, 300)}
-                title="+5 min"
-              >
-                +5
-              </button>
+                {/* Type dot — click cycles work → break → transition */}
+                <button
+                  className={styles.typeDot}
+                  style={{ background: TYPE_COLORS[phase.type] }}
+                  onClick={() => handleTypeClick(phase.id)}
+                  title={`Type: ${phase.type} (click to cycle)`}
+                />
 
-              {/* Remove */}
+                {/* Label */}
+                <input
+                  ref={phase.id === newPhaseId
+                    ? (el) => { if (el) { el.focus(); setNewPhaseId(null); } }
+                    : undefined}
+                  className={styles.labelInput}
+                  value={phase.label}
+                  placeholder="Phase name…"
+                  onChange={e => handleLabelChange(phase.id, e.target.value)}
+                />
+
+                {/* −5 min */}
+                <button
+                  className={styles.adjBtn}
+                  onClick={() => handleAdjust(phase.id, -300)}
+                  title="−5 min"
+                >
+                  −5
+                </button>
+
+                {/* Duration display / inline edit */}
+                {editingDurId === phase.id ? (
+                  <input
+                    className={styles.durationInput}
+                    value={editingDurVal}
+                    onChange={e => setEditingDurVal(e.target.value)}
+                    onBlur={() => handleDurCommit(phase.id)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') handleDurCommit(phase.id);
+                      if (e.key === 'Escape') { setEditingDurId(null); setEditingDurVal(''); }
+                    }}
+                    autoFocus
+                  />
+                ) : (
+                  <span
+                    className={styles.durationDisplay}
+                    onClick={() => handleDurClick(phase.id, phase.durationSeconds)}
+                    title="Click to edit duration"
+                  >
+                    {fmtDuration(phase.durationSeconds)}
+                  </span>
+                )}
+
+                {/* +5 min */}
+                <button
+                  className={styles.adjBtn}
+                  onClick={() => handleAdjust(phase.id, 300)}
+                  title="+5 min"
+                >
+                  +5
+                </button>
+
+                {/* Remove */}
+                <button
+                  className={styles.removeBtn}
+                  onClick={() => handleRemove(phase.id)}
+                  title="Remove phase"
+                >
+                  ×
+                </button>
+              </div>
+
+              {/* Insert-between button — appears after every row */}
               <button
-                className={styles.removeBtn}
-                onClick={() => handleRemove(phase.id)}
-                title="Remove phase"
+                className={styles.insertBetweenBtn}
+                onClick={() => handleInsertAt(i + 1)}
+                title={`Insert phase after "${phase.label || `Phase ${i + 1}`}"`}
               >
-                ×
+                <span className={styles.insertBetweenLine} />
+                <span className={styles.insertBetweenPlus}>+ insert</span>
+                <span className={styles.insertBetweenLine} />
               </button>
             </div>
           ))}
         </div>
 
-        {/* Add phase */}
+        {/* Append phase at end */}
         <button className={styles.addPhaseBtn} onClick={handleAddPhase}>
-          + add phase
+          + append phase
         </button>
       </div>
     </div>
