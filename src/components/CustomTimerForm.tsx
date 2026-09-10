@@ -7,13 +7,15 @@ interface Props {
 }
 
 export const CustomTimerForm: React.FC<Props> = ({ onStart }) => {
-  const { customSounds, addCustomSound, showToast } = useTimerStore();
+  const { settings, customSounds, addCustomSound, showToast } = useTimerStore();
   const [collapsed, setCollapsed] = useState(true);
   const [hours, setHours]   = useState('');
   const [mins, setMins]     = useState('');
   const [secs, setSecs]     = useState('');
   const [name, setName]     = useState('');
-  const [sound, setSound]   = useState('chime');
+  // Starts from the user's chosen default tone rather than always "chime", so
+  // this form agrees with what Preset Buttons and Settings already show.
+  const [sound, setSound]   = useState(settings.defaultSound);
   const [msg, setMsg]       = useState('');
 
   const handleStart = () => {

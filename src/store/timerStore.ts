@@ -212,7 +212,7 @@ interface TimerStore {
   _onSequenceComplete: () => void;
 
   // ── Legacy timer actions (for history/settings parts of the app) ──
-  updateTimerSound: (id: string, soundType: string) => void;  // no-op on new engine, kept for TimerCard compat
+  updateTimerSound: (id: string, soundType: string) => Promise<void>;
   addHistory: (item: HistoryItem) => void;
   updateStats: (stats: Partial<Stats>) => void;
   setSequences: (seqs: Sequence[]) => void;
@@ -536,15 +536,17 @@ export const useTimerStore = create<TimerStore>((set, get) => ({
 
   // ── Persisted/legacy actions ────────────────────────────────────────────────
 
-  // Kept for TimerCard compatibility — sound is now stored in Rust state for
-  // active timers, but we can still update the in-memory activeTimer so the
-  // UI reflects the user's sound picker choice immediately.
-  updateTimerSound: (id, soundType) => {
-    set((s) => ({
-      activeTimer: s.activeTimer?.id === id
-        ? { ...s.activeTimer, sound_type: soundType }
-        : s.activeTimer,
-    }));
+  // Sound is authoritative in Rust state — the engine, not this in-memory
+  // copy, is what plays the tone on completion, so the choice has to reach it
+  // via invoke() rather than just being set locally.
+  updateTimerSound: async (id, soundType) => {
+    if (get().activeTimer?.id !== id) return;
+    try {
+      const timer = await invoke<RustTimerState | null>('cmd_set_timer_sound', { soundType });
+      if (timer) set({ activeTimer: timer });
+    } catch (e) {
+      console.warn('Failed to update timer sound:', e);
+    }
   },
 
   addHistory: (item) =>

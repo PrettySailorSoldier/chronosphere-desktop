@@ -61,7 +61,7 @@ export const TimerCard: React.FC<Props> = ({
   const dashOffset = CIRCUMFERENCE * (1 - progress);
 
   const handleSoundChange = (newSound: string) => {
-    updateTimerSound(id, newSound);
+    void updateTimerSound(id, newSound);
     setShowSoundPicker(false);
   };
 

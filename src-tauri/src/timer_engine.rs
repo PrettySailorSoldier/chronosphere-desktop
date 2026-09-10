@@ -166,6 +166,12 @@ impl TimerState {
         true
     }
 
+    /// Change the tone this timer will play on completion. Allowed any time the
+    /// timer is still active — a skip or pause shouldn't lock the choice in.
+    pub fn set_sound(&mut self, sound_type: String) {
+        self.sound_type = sound_type;
+    }
+
     /// Move to Complete exactly once. Returns false if it was already complete,
     /// which is what stops a skip racing the tick loop into a double completion.
     pub fn complete(&mut self, skipped: bool) -> bool {
@@ -338,6 +344,14 @@ mod tests {
         let mut t = timer(60);
         t.complete(false);
         assert!(!t.extend(60));
+    }
+
+    #[test]
+    fn set_sound_changes_the_completion_tone() {
+        let mut t = timer(60);
+        assert_eq!(t.sound_type, "chime");
+        t.set_sound("gong".into());
+        assert_eq!(t.sound_type, "gong");
     }
 
     #[test]

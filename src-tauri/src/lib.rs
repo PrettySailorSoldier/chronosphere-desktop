@@ -222,6 +222,21 @@ fn cmd_skip_timer(app: AppHandle, timer_state: State<SharedTimerState>) {
     }
 }
 
+/// Change the completion tone of the current timer (or current sequence step).
+/// The frontend used to only update its own copy of the state, so the choice
+/// never reached the engine and the timer kept playing whatever tone it
+/// started with.
+#[tauri::command]
+fn cmd_set_timer_sound(
+    sound_type: String,
+    timer_state: State<SharedTimerState>,
+) -> Option<TimerState> {
+    let mut lock = lock_or_recover(&timer_state);
+    let timer = lock.as_mut()?;
+    timer.set_sound(sound_type);
+    Some(timer.clone())
+}
+
 /// Adjust the running/paused timer by a signed delta (e.g. +60, -300)
 #[tauri::command]
 fn cmd_extend_timer(
@@ -289,6 +304,7 @@ pub fn run() {
             cmd_pause_timer,
             cmd_resume_timer,
             cmd_skip_timer,
+            cmd_set_timer_sound,
             cmd_extend_timer,
             cmd_stop_timer,
             cmd_get_timer_state,
