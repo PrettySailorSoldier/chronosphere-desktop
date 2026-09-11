@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { getCircadianHour, type CircadianHour } from '../utils/circadian';
-import { useTimerStore } from '../store/timerStore';
+import { useTimerStore, MAX_CONCURRENT_TIMERS } from '../store/timerStore';
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -8,9 +8,10 @@ export const RightNowBlock: React.FC = () => {
   const [hour, setHour] = useState<CircadianHour>(() => getCircadianHour(new Date().getHours()));
 
   const startTimer   = useTimerStore((s) => s.startTimer);
-  const activeTimer  = useTimerStore((s) => s.activeTimer);
+  const timerCount   = useTimerStore((s) => Object.keys(s.timers).length);
   const defaultSound = useTimerStore((s) => s.settings.defaultSound);
   const showToast    = useTimerStore((s) => s.showToast);
+  const atCap = timerCount >= MAX_CONCURRENT_TIMERS;
 
   useEffect(() => {
     const update = () => setHour(getCircadianHour(new Date().getHours()));
@@ -45,8 +46,8 @@ export const RightNowBlock: React.FC = () => {
       <button
         className="rnb-start-btn"
         onClick={handleStartSuggested}
-        disabled={!!activeTimer}
-        title={activeTimer ? 'A timer is already running' : `Start a ${hour.timerHint}-minute ${hour.phase} block`}
+        disabled={atCap}
+        title={atCap ? `Too many timers running (max ${MAX_CONCURRENT_TIMERS})` : `Start a ${hour.timerHint}-minute ${hour.phase} block`}
       >
         ▶ Start {hour.timerHint}m
       </button>

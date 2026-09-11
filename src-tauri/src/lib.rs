@@ -3,19 +3,33 @@ mod timer_engine;
 mod sequence_engine;
 
 use timer_engine::{
-    lock_or_recover, new_shared_state, run_tick_loop, SharedTimerState, TimerState, MAX_SECONDS,
+    lock_or_recover, new_shared_state, run_tick_loop, SharedTimerState, TimerState,
+    MAX_CONCURRENT_TIMERS, MAX_SECONDS,
 };
 use sequence_engine::{Sequence, SequenceStep};
 
 use tauri::{AppHandle, Emitter, State};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-// Shared active sequence state
-pub type SharedSequenceState = Arc<Mutex<Option<Sequence>>>;
+// Shared active sequences, keyed the same way as SharedTimerState (slot_key).
+pub type SharedSequenceState = Arc<Mutex<HashMap<String, Sequence>>>;
 
 fn new_shared_sequence() -> SharedSequenceState {
-    Arc::new(Mutex::new(None))
+    Arc::new(Mutex::new(HashMap::new()))
+}
+
+/// Payload for the `sequence:step-started` event — the frontend needs the slot
+/// id alongside the step index now that more than one sequence can be running.
+#[derive(Clone, Serialize)]
+struct SequenceStepStarted {
+    id: String,
+    step: usize,
+}
+
+fn cap_error() -> String {
+    format!("Too many timers running (max {MAX_CONCURRENT_TIMERS}). Stop one first.")
 }
 
 // ─── Payloads sent from the frontend ──────────────────────────────────────────
@@ -88,7 +102,9 @@ fn timer_for_current_step(sequence: &Sequence, start_paused: bool) -> Option<Tim
 // the UI can render the new state immediately instead of guessing locally and
 // waiting up to a tick for the engine to confirm it.
 
-/// Start a standalone (non-sequence) timer
+/// Start a standalone (non-sequence) timer. `id` is its slot key — starting
+/// again with an id already in flight restarts that one slot rather than
+/// adding a new one, so this never needs to touch any other running timer.
 #[tauri::command]
 fn cmd_start_timer(
     id: String,
@@ -97,7 +113,6 @@ fn cmd_start_timer(
     sound_type: String,
     notification_msg: String,
     timer_state: State<SharedTimerState>,
-    sequence_state: State<SharedSequenceState>,
 ) -> Result<TimerState, String> {
     if total_seconds == 0 {
         return Err("Timer duration must be greater than zero".to_string());
@@ -106,15 +121,19 @@ fn cmd_start_timer(
         return Err("Timer duration must be 24 hours or less".to_string());
     }
 
-    // Starting a standalone timer abandons any sequence in flight.
-    *lock_or_recover(&sequence_state) = None;
+    let mut lock = lock_or_recover(&timer_state);
+    if !lock.contains_key(&id) && lock.len() >= MAX_CONCURRENT_TIMERS {
+        return Err(cap_error());
+    }
 
-    let new_timer = TimerState::new(id, name, total_seconds, sound_type, notification_msg, false);
-    *lock_or_recover(&timer_state) = Some(new_timer.clone());
+    let new_timer = TimerState::new(id.clone(), name, total_seconds, sound_type, notification_msg, false);
+    lock.insert(id, new_timer.clone());
     Ok(new_timer)
 }
 
-/// Start a sequence — loads the first step into the timer engine
+/// Start a sequence — loads the first step into the timer engine. The
+/// sequence's own id is its slot key, so starting the same sequence again
+/// while it's still running just restarts that one slot.
 #[tauri::command]
 fn cmd_start_sequence(
     sequence: SequenceInput,
@@ -122,14 +141,20 @@ fn cmd_start_sequence(
     sequence_state: State<SharedSequenceState>,
 ) -> Result<TimerState, String> {
     let steps: Vec<SequenceStep> = sequence.steps.into_iter().map(Into::into).collect();
+    let id = sequence.id.clone();
     let seq = Sequence::new(sequence.id, sequence.name, steps, sequence.loop_enabled)?;
 
     let new_timer = timer_for_current_step(&seq, false)
         .ok_or_else(|| "Sequence has no startable step".to_string())?;
 
     // Lock ordering is sequence-then-timer everywhere to avoid deadlock.
-    *lock_or_recover(&sequence_state) = Some(seq);
-    *lock_or_recover(&timer_state) = Some(new_timer.clone());
+    let mut seq_lock = lock_or_recover(&sequence_state);
+    let mut timer_lock = lock_or_recover(&timer_state);
+    if !timer_lock.contains_key(&id) && timer_lock.len() >= MAX_CONCURRENT_TIMERS {
+        return Err(cap_error());
+    }
+    seq_lock.insert(id.clone(), seq);
+    timer_lock.insert(id, new_timer.clone());
 
     Ok(new_timer)
 }
@@ -143,13 +168,14 @@ fn cmd_start_sequence(
 #[tauri::command]
 fn cmd_next_sequence_step(
     app: AppHandle,
+    id: String,
     completed_step: Option<usize>,
     start_paused: bool,
     timer_state: State<SharedTimerState>,
     sequence_state: State<SharedSequenceState>,
 ) -> Result<Option<TimerState>, String> {
     let mut seq_lock = lock_or_recover(&sequence_state);
-    let Some(sequence) = seq_lock.as_mut() else {
+    let Some(sequence) = seq_lock.get_mut(&id) else {
         // Nothing to advance — a stop() that landed first, not an error worth surfacing.
         return Ok(None);
     };
@@ -161,42 +187,42 @@ fn cmd_next_sequence_step(
     }
 
     if !sequence.advance() {
-        *seq_lock = None;
+        seq_lock.remove(&id);
         drop(seq_lock);
-        *lock_or_recover(&timer_state) = None;
-        let _ = app.emit("sequence:complete", ());
+        lock_or_recover(&timer_state).remove(&id);
+        let _ = app.emit("sequence:complete", id);
         return Ok(None);
     }
 
     let step = sequence.current_step;
     let Some(new_timer) = timer_for_current_step(sequence, start_paused) else {
-        *seq_lock = None;
+        seq_lock.remove(&id);
         drop(seq_lock);
-        *lock_or_recover(&timer_state) = None;
-        let _ = app.emit("sequence:complete", ());
+        lock_or_recover(&timer_state).remove(&id);
+        let _ = app.emit("sequence:complete", id);
         return Ok(None);
     };
 
     drop(seq_lock);
-    *lock_or_recover(&timer_state) = Some(new_timer.clone());
-    let _ = app.emit("sequence:step-started", step);
+    lock_or_recover(&timer_state).insert(id.clone(), new_timer.clone());
+    let _ = app.emit("sequence:step-started", SequenceStepStarted { id, step });
     Ok(Some(new_timer))
 }
 
-/// Pause the running timer — snapshots remaining time and drops the deadline
+/// Pause a running timer — snapshots remaining time and drops the deadline
 #[tauri::command]
-fn cmd_pause_timer(timer_state: State<SharedTimerState>) -> Option<TimerState> {
+fn cmd_pause_timer(id: String, timer_state: State<SharedTimerState>) -> Option<TimerState> {
     let mut lock = lock_or_recover(&timer_state);
-    let timer = lock.as_mut()?;
+    let timer = lock.get_mut(&id)?;
     timer.pause();
     Some(timer.clone())
 }
 
 /// Resume a paused timer
 #[tauri::command]
-fn cmd_resume_timer(timer_state: State<SharedTimerState>) -> Option<TimerState> {
+fn cmd_resume_timer(id: String, timer_state: State<SharedTimerState>) -> Option<TimerState> {
     let mut lock = lock_or_recover(&timer_state);
-    let timer = lock.as_mut()?;
+    let timer = lock.get_mut(&id)?;
     timer.resume();
     Some(timer.clone())
 }
@@ -206,10 +232,10 @@ fn cmd_resume_timer(timer_state: State<SharedTimerState>) -> Option<TimerState> 
 /// The completion is tagged `skipped` so the frontend advances the sequence but
 /// does not log it as finished work or play the completion tone.
 #[tauri::command]
-fn cmd_skip_timer(app: AppHandle, timer_state: State<SharedTimerState>) {
+fn cmd_skip_timer(app: AppHandle, id: String, timer_state: State<SharedTimerState>) {
     let snapshot = {
         let mut lock = lock_or_recover(&timer_state);
-        match lock.as_mut() {
+        match lock.get_mut(&id) {
             // `complete` returns false if the tick loop already finished this
             // phase, so a skip landing at the buzzer cannot emit a second event.
             Some(timer) => timer.complete(true).then(|| timer.clone()),
@@ -222,31 +248,33 @@ fn cmd_skip_timer(app: AppHandle, timer_state: State<SharedTimerState>) {
     }
 }
 
-/// Change the completion tone of the current timer (or current sequence step).
+/// Change the completion tone of a timer (or a running sequence step).
 /// The frontend used to only update its own copy of the state, so the choice
 /// never reached the engine and the timer kept playing whatever tone it
 /// started with.
 #[tauri::command]
 fn cmd_set_timer_sound(
+    id: String,
     sound_type: String,
     timer_state: State<SharedTimerState>,
 ) -> Option<TimerState> {
     let mut lock = lock_or_recover(&timer_state);
-    let timer = lock.as_mut()?;
+    let timer = lock.get_mut(&id)?;
     timer.set_sound(sound_type);
     Some(timer.clone())
 }
 
-/// Adjust the running/paused timer by a signed delta (e.g. +60, -300)
+/// Adjust a running/paused timer by a signed delta (e.g. +60, -300)
 #[tauri::command]
 fn cmd_extend_timer(
     app: AppHandle,
+    id: String,
     seconds: i64,
     timer_state: State<SharedTimerState>,
 ) -> Option<TimerState> {
     let snapshot = {
         let mut lock = lock_or_recover(&timer_state);
-        match lock.as_mut() {
+        match lock.get_mut(&id) {
             Some(timer) => timer.extend(seconds).then(|| timer.clone()),
             None => None,
         }
@@ -258,26 +286,30 @@ fn cmd_extend_timer(
     snapshot
 }
 
-/// Stop and clear everything
+/// Stop and clear one timer/sequence slot, leaving every other slot untouched.
 #[tauri::command]
 fn cmd_stop_timer(
+    id: String,
     timer_state: State<SharedTimerState>,
     sequence_state: State<SharedSequenceState>,
 ) {
-    *lock_or_recover(&sequence_state) = None;
-    *lock_or_recover(&timer_state) = None;
+    lock_or_recover(&sequence_state).remove(&id);
+    lock_or_recover(&timer_state).remove(&id);
 }
 
-/// Get current timer state snapshot (used for UI rehydration on window open).
+/// List every active timer/sequence slot (used for UI rehydration on window open).
 ///
-/// Syncs against the wall clock first so a window reopened after the machine
-/// slept sees the true remaining time rather than a stale snapshot.
+/// Syncs each entry against the wall clock first so a window reopened after the
+/// machine slept sees the true remaining time rather than a stale snapshot.
 #[tauri::command]
-fn cmd_get_timer_state(timer_state: State<SharedTimerState>) -> Option<TimerState> {
+fn cmd_list_timer_states(timer_state: State<SharedTimerState>) -> Vec<TimerState> {
     let mut lock = lock_or_recover(&timer_state);
-    let timer = lock.as_mut()?;
-    timer.sync_remaining();
-    Some(timer.clone())
+    lock.values_mut()
+        .map(|timer| {
+            timer.sync_remaining();
+            timer.clone()
+        })
+        .collect()
 }
 
 // ═══════════════════════════════════════════════════
@@ -307,7 +339,7 @@ pub fn run() {
             cmd_set_timer_sound,
             cmd_extend_timer,
             cmd_stop_timer,
-            cmd_get_timer_state,
+            cmd_list_timer_states,
         ])
         .setup(|app| {
             let app_handle = app.handle().clone();

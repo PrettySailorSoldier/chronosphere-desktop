@@ -9,6 +9,7 @@ interface Props {
   isRunning: boolean;
   name: string;
   soundType: string;
+  /** Slot id — identifies which running timer/sequence this card controls. */
   id: string;
   phase: TimerPhase;
   /** Part of a running sequence — skipping advances rather than ending everything. */
@@ -141,7 +142,7 @@ export const TimerCard: React.FC<Props> = ({
           className="extend-btn"
           disabled={isDone}
           title="Subtract 5 minutes"
-          onClick={() => { void extendTimer(-300); showToast('−5 min'); }}
+          onClick={() => { void extendTimer(id, -300); showToast('−5 min'); }}
         >
           −5m
         </button>
@@ -149,7 +150,7 @@ export const TimerCard: React.FC<Props> = ({
           className="extend-btn"
           disabled={isDone}
           title="Add 5 minutes"
-          onClick={() => { void extendTimer(300); showToast('+5 min'); }}
+          onClick={() => { void extendTimer(id, 300); showToast('+5 min'); }}
         >
           +5m
         </button>

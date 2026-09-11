@@ -16,25 +16,18 @@ function stepIndicatorLabel(step: SequenceStep): string {
 }
 
 export const SequencesSection: React.FC = () => {
-  const { sequences, activeTimer, isSequenceActive } = useTimerStore(
+  const { sequences, timers } = useTimerStore(
     useShallow((s) => ({
       sequences: s.sequences,
-      activeTimer: s.activeTimer,
-      isSequenceActive: s.isSequenceActive,
+      timers: s.timers,
     })),
   );
   const { startSequence, stop, skip, showToast } = useTimerStore.getState();
 
   const [selectedSeqId, setSelectedSeqId] = React.useState('');
 
-  // Derive which step we're on from the active timer's sequence metadata
-  const currentStep = activeTimer?.sequence_step ?? null;
-  const totalSteps  = activeTimer?.sequence_total_steps ?? null;
-
-  // Find the active sequence definition for rendering step indicators
-  const activeSeqDef = isSequenceActive && activeTimer?.sequence_id
-    ? sequences.find((s) => s.id === activeTimer.sequence_id)
-    : null;
+  // Every currently-running sequence slot, each rendered as its own progress card.
+  const activeSequences = Object.entries(timers).filter(([, t]) => t.sequence_id);
 
   const handleStart = async () => {
     if (!selectedSeqId) { showToast('Please select a sequence'); return; }
@@ -53,51 +46,59 @@ export const SequencesSection: React.FC = () => {
     }
   };
 
-  const handleStop = async () => {
-    await stop();
+  const handleStop = async (id: string) => {
+    await stop(id);
     showToast('Sequence stopped');
   };
 
-  const handleSkip = async () => {
-    await skip();
+  const handleSkip = async (id: string) => {
+    await skip(id);
   };
 
-  if (sequences.length === 0 && !isSequenceActive) return null;
+  if (sequences.length === 0 && activeSequences.length === 0) return null;
 
   return (
     <div>
-      {/* Active sequence progress.
+      {/* Active sequence progress — one block per running sequence slot.
           Driven by the engine's own step metadata, so it still renders for
           sequences with no saved definition (built in the sequencer, or deleted
           from settings while running) instead of silently disappearing. */}
-      {isSequenceActive && currentStep !== null && totalSteps !== null && (
-        <div className="sequence-progress">
-          <div className="sequence-progress-header">
-            <span className="sequence-progress-name">
-              🔗 {activeSeqDef?.name ?? activeTimer?.name ?? 'Sequence'}
-            </span>
-            <span className="sequence-progress-count">
-              Step {currentStep + 1} of {totalSteps}
-            </span>
-            <button className="sequence-stop-btn" onClick={handleSkip} title="Skip to next step (S)">
-              Skip
-            </button>
-            <button className="sequence-stop-btn" onClick={handleStop}>Stop</button>
-          </div>
-          <div className="sequence-progress-steps">
-            {(activeSeqDef?.steps ?? Array.from({ length: totalSteps }, (_, i): SequenceStep => ({ label: `Step ${i + 1}`, seconds: 0 })))
-              .map((step, i) => {
-                let cls = 'sequence-step-indicator';
-                if (i < currentStep) cls += ' completed';
-                else if (i === currentStep) cls += ' current';
-                return <span key={i} className={cls}>{stepIndicatorLabel(step)}</span>;
-              })}
-          </div>
-        </div>
-      )}
+      {activeSequences.map(([id, timer]) => {
+        const currentStep = timer.sequence_step ?? null;
+        const totalSteps = timer.sequence_total_steps ?? null;
+        if (currentStep === null || totalSteps === null) return null;
+        const seqDef = sequences.find((s) => s.id === timer.sequence_id);
 
-      {/* Sequence selector (only show when not in an active sequence) */}
-      {sequences.length > 0 && !isSequenceActive && (
+        return (
+          <div className="sequence-progress" key={id}>
+            <div className="sequence-progress-header">
+              <span className="sequence-progress-name">
+                🔗 {seqDef?.name ?? timer.name ?? 'Sequence'}
+              </span>
+              <span className="sequence-progress-count">
+                Step {currentStep + 1} of {totalSteps}
+              </span>
+              <button className="sequence-stop-btn" onClick={() => handleSkip(id)} title="Skip to next step">
+                Skip
+              </button>
+              <button className="sequence-stop-btn" onClick={() => handleStop(id)}>Stop</button>
+            </div>
+            <div className="sequence-progress-steps">
+              {(seqDef?.steps ?? Array.from({ length: totalSteps }, (_, i): SequenceStep => ({ label: `Step ${i + 1}`, seconds: 0 })))
+                .map((step, i) => {
+                  let cls = 'sequence-step-indicator';
+                  if (i < currentStep) cls += ' completed';
+                  else if (i === currentStep) cls += ' current';
+                  return <span key={i} className={cls}>{stepIndicatorLabel(step)}</span>;
+                })}
+            </div>
+          </div>
+        );
+      })}
+
+      {/* Sequence selector — starting is additive, so this stays visible even
+          while one or more sequences are already running. */}
+      {sequences.length > 0 && (
         <div className="sequences-section">
           <div className="section-header">Flow Sequences</div>
           <div className="sequence-controls">

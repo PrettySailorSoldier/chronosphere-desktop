@@ -1,5 +1,6 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 import { load } from '@tauri-apps/plugin-store';
+import { listen } from '@tauri-apps/api/event';
 import { useShallow } from 'zustand/react/shallow';
 import { useTimerStore, ResolvedStep } from '../store/timerStore';
 import styles from './SequencerPanel.module.css';
@@ -138,19 +139,13 @@ export function SequencerPanel() {
   // closed, and could run at the same time as a "real" timer with the two
   // fighting over the UI. It now drives the same engine as every other timer,
   // so it inherits wall-clock accuracy, tones, notifications and rehydration.
-  const { activeTimer, isSequenceActive, sequenceComplete } = useTimerStore(
-    useShallow((s) => ({
-      activeTimer: s.activeTimer,
-      isSequenceActive: s.isSequenceActive,
-      sequenceComplete: s.sequenceComplete,
-    })),
-  );
+  const mine = useTimerStore(useShallow((s) => s.timers[SEQUENCER_ID] ?? null));
 
-  const isOurs      = isSequenceActive && activeTimer?.sequence_id === SEQUENCER_ID;
-  const activeIdx   = isOurs ? activeTimer?.sequence_step ?? null : null;
-  const secondsLeft = isOurs ? activeTimer?.remaining_seconds ?? 0 : 0;
-  const running     = isOurs && activeTimer?.phase === 'Running';
-  const paused      = isOurs && activeTimer?.phase === 'Paused';
+  const isOurs      = mine !== null;
+  const activeIdx   = isOurs ? mine?.sequence_step ?? null : null;
+  const secondsLeft = isOurs ? mine?.remaining_seconds ?? 0 : 0;
+  const running     = isOurs && mine?.phase === 'Running';
+  const paused      = isOurs && mine?.phase === 'Paused';
   const started     = activeIdx !== null;
 
   const [isComplete, setIsComplete] = useState(false);
@@ -173,21 +168,25 @@ export function SequencerPanel() {
   activeIdxRef.current = activeIdx;
 
   // Flash the "complete" state, but only when our run actually reached the end —
-  // being stopped, reset, or displaced by another timer is not a completion.
-  const wasOursRef = useRef(false);
+  // being stopped or reset is not a completion. `sequence:complete` carries the
+  // slot id, so this listens for its own id rather than reading a global flag
+  // (multiple sequences can finish around the same time now).
   useEffect(() => {
-    if (isOurs) {
-      wasOursRef.current = true;
-      setIsComplete(false);
-      return;
-    }
-    if (!wasOursRef.current) return;
-    wasOursRef.current = false;
-    if (!sequenceComplete) return;
-    setIsComplete(true);
-    const t = setTimeout(() => { if (mountedRef.current) setIsComplete(false); }, 4000);
-    return () => clearTimeout(t);
-  }, [isOurs, sequenceComplete]);
+    if (isOurs) setIsComplete(false);
+  }, [isOurs]);
+
+  useEffect(() => {
+    let flashTimeout: ReturnType<typeof setTimeout> | null = null;
+    const unlistenPromise = listen<string>('sequence:complete', (e) => {
+      if (e.payload !== SEQUENCER_ID) return;
+      setIsComplete(true);
+      flashTimeout = setTimeout(() => { if (mountedRef.current) setIsComplete(false); }, 4000);
+    });
+    return () => {
+      if (flashTimeout) clearTimeout(flashTimeout);
+      void unlistenPromise.then((fn) => fn());
+    };
+  }, []);
 
   // ── Load from store ONCE on mount ────────────────────────────────────────────
   useEffect(() => {
@@ -225,18 +224,13 @@ export function SequencerPanel() {
     const store = useTimerStore.getState();
 
     // Resume rather than restart if this sequence is merely paused.
-    if (isOurs && store.activeTimer?.phase === 'Paused') {
-      await store.resume();
+    if (store.timers[SEQUENCER_ID]?.phase === 'Paused') {
+      await store.resume(SEQUENCER_ID);
       return;
     }
 
     const steps = toResolvedSteps(phasesRef.current);
     if (steps.length === 0) return;
-
-    if (store.activeTimer && !isOurs) {
-      const label = store.activeTimer.name;
-      if (!window.confirm(`"${label}" is still running. Replace it with this sequence?`)) return;
-    }
 
     setIsComplete(false);
     try {
@@ -250,16 +244,15 @@ export function SequencerPanel() {
       console.warn('Sequencer start failed:', e);
       store.showToast('Could not start the sequence');
     }
-  }, [isOurs]);
+  }, []);
 
-  const handlePause = useCallback(() => { void useTimerStore.getState().pause(); }, []);
+  const handlePause = useCallback(() => { void useTimerStore.getState().pause(SEQUENCER_ID); }, []);
 
-  const handleSkip = useCallback(() => { void useTimerStore.getState().skip(); }, []);
+  const handleSkip = useCallback(() => { void useTimerStore.getState().skip(SEQUENCER_ID); }, []);
 
   const handleReset = useCallback(() => {
     setIsComplete(false);
-    wasOursRef.current = false;
-    if (isOurs) void useTimerStore.getState().stop();
+    if (isOurs) void useTimerStore.getState().stop(SEQUENCER_ID);
   }, [isOurs]);
 
   // ── Phase list mutations (all save immediately) ───────────────────────────────
@@ -300,7 +293,7 @@ export function SequencerPanel() {
     // the live countdown and the editor stay in agreement.
     const idx = phasesRef.current.findIndex(p => p.id === id);
     if (idx !== -1 && idx === activeIdxRef.current) {
-      void useTimerStore.getState().extendTimer(delta);
+      void useTimerStore.getState().extendTimer(SEQUENCER_ID, delta);
     }
     setPhases(prev => {
       const next = prev.map(p => {
@@ -320,7 +313,7 @@ export function SequencerPanel() {
     // deleting the phase that is currently running has to end the run — there is
     // no coherent way to keep counting down a phase the user just removed.
     if (idx === activeIdxRef.current) {
-      void useTimerStore.getState().stop();
+      void useTimerStore.getState().stop(SEQUENCER_ID);
     }
 
     setPhases(prev => {
@@ -347,7 +340,7 @@ export function SequencerPanel() {
     const activeI = activeIdxRef.current;
     if (activeI !== null && insertIdx <= activeI) {
       if (!window.confirm('Inserting before the current phase will stop the running sequence. Continue?')) return;
-      void useTimerStore.getState().stop();
+      void useTimerStore.getState().stop(SEQUENCER_ID);
     }
     const id = genId();
     setNewPhaseId(id);
@@ -365,7 +358,7 @@ export function SequencerPanel() {
     const newPhases = makePhases(template);
     // Loading a template replaces the phase list wholesale, so any run based on
     // the old list has to end with it.
-    if (activeIdxRef.current !== null) void useTimerStore.getState().stop();
+    if (activeIdxRef.current !== null) void useTimerStore.getState().stop(SEQUENCER_ID);
     setIsComplete(false);
     setPhases(newPhases);
     saveToStore(newPhases);
@@ -388,7 +381,7 @@ export function SequencerPanel() {
     if (dragIdx === null || dragIdx === dropIdx) return;
 
     // Reordering invalidates the step indices the engine is running against.
-    if (activeIdxRef.current !== null) void useTimerStore.getState().stop();
+    if (activeIdxRef.current !== null) void useTimerStore.getState().stop(SEQUENCER_ID);
 
     setPhases(prev => {
       const next = [...prev];
@@ -424,7 +417,7 @@ export function SequencerPanel() {
 
   // Measure progress against the engine's own total for this step, so a live
   // ±5m adjustment doesn't make the ring disagree with the digits.
-  const phaseTotal = isOurs ? activeTimer?.total_seconds ?? 0 : 0;
+  const phaseTotal = isOurs ? mine?.total_seconds ?? 0 : 0;
   const progress   = phaseTotal > 0 ? Math.min(1, secondsLeft / phaseTotal) : 0;
   const ringOffset = RING_CIRC * (1 - progress);
   const ringColor  = activePhase ? TYPE_COLORS[activePhase.type] : 'rgba(100,60,140,0.4)';

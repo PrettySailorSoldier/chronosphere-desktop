@@ -1,8 +1,8 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { load } from '@tauri-apps/plugin-store';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { useTimerStore, HistoryItem, Stats, Settings, Sequence, CustomSound, DEFAULT_SETTINGS, initTimerListeners, StopwatchSession } from './store/timerStore';
+import { useTimerStore, HistoryItem, Stats, Settings, Sequence, CustomSound, DEFAULT_SETTINGS, initTimerListeners, StopwatchSession, RustTimerState } from './store/timerStore';
 import { getCircadianHour } from './utils/circadian';
 
 import { TimerCard }        from './components/TimerCard';
@@ -47,9 +47,9 @@ const PERSISTED_KEYS = [
 function App() {
   // Subscribe only to what App itself renders. Pulling the whole store here made
   // every 200ms engine tick and 250ms stopwatch tick re-render the entire tree.
-  const { activeTimer, toast, hydrate, clearToast, stop } = useTimerStore(
+  const { timers, toast, hydrate, clearToast, stop } = useTimerStore(
     useShallow((s) => ({
-      activeTimer: s.activeTimer,
+      timers: s.timers,
       toast: s.toast,
       hydrate: s.hydrate,
       clearToast: s.clearToast,
@@ -61,6 +61,23 @@ function App() {
   const [pendingLabelId, setPendingLabelId] = useState<string | null>(null);
   const [view, setView] = useState<View>('timer');
   const storeRef = useRef<Awaited<ReturnType<typeof load>> | null>(null);
+
+  // Stable render order: newest-started slot last, so cards don't reshuffle
+  // as each one's remaining time changes.
+  const timerList = useMemo(
+    () => Object.entries(timers).sort(([a], [b]) => a.localeCompare(b)),
+    [timers],
+  );
+  // The one to feature in the window title / running strip when more than one
+  // is active — whichever is closest to finishing is the most actionable.
+  const soonestTimer = useMemo<RustTimerState | null>(() => {
+    let soonest: RustTimerState | null = null;
+    for (const t of Object.values(timers)) {
+      if (t.phase === 'Complete') continue;
+      if (!soonest || t.remaining_seconds < soonest.remaining_seconds) soonest = t;
+    }
+    return soonest ?? Object.values(timers)[0] ?? null;
+  }, [timers]);
 
   // ─── Live clock for header ────────────────────────────────────────────────
   const [headerTime, setHeaderTime] = useState('');
@@ -152,18 +169,24 @@ function App() {
   }, [storeReady, persist]);
 
   // ─── Window title shows live countdown ────────────────────────────────────
+  // With several timers running, the soonest to finish is the most actionable
+  // one to show; the rest are summarized as a "+N more" suffix.
   useEffect(() => {
-    const title = activeTimer && activeTimer.phase !== 'Complete'
-      ? `${activeTimer.phase === 'Paused' ? '⏸' : '⏳'} ${formatClock(activeTimer.remaining_seconds)} · ${activeTimer.name}`
+    const extra = timerList.length > 1 ? ` +${timerList.length - 1} more` : '';
+    const title = soonestTimer && soonestTimer.phase !== 'Complete'
+      ? `${soonestTimer.phase === 'Paused' ? '⏸' : '⏳'} ${formatClock(soonestTimer.remaining_seconds)} · ${soonestTimer.name}${extra}`
       : 'Chrono Sphere';
     getCurrentWindow().setTitle(title).catch(() => {});
-  }, [activeTimer?.remaining_seconds, activeTimer?.phase, activeTimer?.name]);
+  }, [soonestTimer?.remaining_seconds, soonestTimer?.phase, soonestTimer?.name, timerList.length]);
 
   // Leave the title clean if the view goes away while a timer is still running.
   useEffect(() => () => { getCurrentWindow().setTitle('Chrono Sphere').catch(() => {}); }, []);
 
   // ─── Keyboard shortcuts ───────────────────────────────────────────────────
   // Space = pause/resume · S = skip phase · Esc = close settings
+  // Only meaningful when exactly one timer is running — with several active,
+  // there's no reasonable way to guess which one a bare keypress means, so the
+  // shortcut is a no-op and per-card buttons are the only control.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
@@ -176,15 +199,17 @@ function App() {
       if (typing || e.ctrlKey || e.metaKey || e.altKey) return;
 
       const state = useTimerStore.getState();
-      if (!state.activeTimer) return;
+      const only = Object.entries(state.timers);
+      if (only.length !== 1) return;
+      const [id, timer] = only[0];
 
       if (e.code === 'Space') {
         e.preventDefault();
-        if (state.activeTimer.phase === 'Running') void state.pause();
-        else if (state.activeTimer.phase === 'Paused') void state.resume();
+        if (timer.phase === 'Running') void state.pause(id);
+        else if (timer.phase === 'Paused') void state.resume(id);
       } else if (e.key.toLowerCase() === 's') {
         e.preventDefault();
-        void state.skip();
+        void state.skip(id);
       }
     };
     window.addEventListener('keydown', onKey);
@@ -227,19 +252,20 @@ function App() {
     s.showToast(`Restarted: ${name}`);
   }, []);
 
-  const handlePauseResume = useCallback(async () => {
-    const { activeTimer: t, pause, resume } = useTimerStore.getState();
+  const handlePauseResume = useCallback(async (id: string) => {
+    const { timers, pause, resume } = useTimerStore.getState();
+    const t = timers[id];
     if (!t) return;
-    if (t.phase === 'Running') await pause();
-    else if (t.phase === 'Paused') await resume();
+    if (t.phase === 'Running') await pause(id);
+    else if (t.phase === 'Paused') await resume(id);
   }, []);
 
-  const handleSkip = useCallback(async () => {
-    await useTimerStore.getState().skip();
+  const handleSkip = useCallback(async (id: string) => {
+    await useTimerStore.getState().skip(id);
   }, []);
 
-  const handleStop = useCallback(async () => {
-    await stop();
+  const handleStop = useCallback(async (id: string) => {
+    await stop(id);
   }, [stop]);
 
   // ─── Circadian header ─────────────────────────────────────────────────────
@@ -297,13 +323,15 @@ function App() {
         ))}
       </div>
 
-      {/* ── Now-running strip (visible when timer runs but user is on another tab) ── */}
-      {activeTimer && view !== 'timer' && (
+      {/* ── Now-running strip (visible when a timer runs but user is on another tab) ── */}
+      {soonestTimer && view !== 'timer' && (
         <button className="running-strip" onClick={() => setView('timer')}>
           <span className="running-strip-dot" />
-          <span className="running-strip-name">{activeTimer.name}</span>
+          <span className="running-strip-name">
+            {timerList.length > 1 ? `${timerList.length} timers running` : soonestTimer.name}
+          </span>
           <span className="running-strip-time">
-            {formatClock(activeTimer.remaining_seconds)}
+            {formatClock(soonestTimer.remaining_seconds)}
           </span>
           <span className="running-strip-hint">view ›</span>
         </button>
@@ -312,25 +340,27 @@ function App() {
       {/* ══ TIMER VIEW ══ */}
       {view === 'timer' && (
         <>
-          {/* Active timer — always at the top, most important thing on screen */}
-          {activeTimer && (
+          {/* Active timers — always at the top, most important thing on screen */}
+          {timerList.length > 0 && (
             <>
               <div className="section-label">now running</div>
               <div className="timers-list">
-                <TimerCard
-                  key={activeTimer.id}
-                  id={activeTimer.id}
-                  name={activeTimer.name}
-                  totalSeconds={activeTimer.total_seconds}
-                  remainingSeconds={activeTimer.remaining_seconds}
-                  soundType={activeTimer.sound_type}
-                  isRunning={activeTimer.phase === 'Running'}
-                  phase={activeTimer.phase}
-                  isSequenceStep={Boolean(activeTimer.sequence_id)}
-                  onPause={handlePauseResume}
-                  onSkip={handleSkip}
-                  onDelete={handleStop}
-                />
+                {timerList.map(([id, t]) => (
+                  <TimerCard
+                    key={id}
+                    id={id}
+                    name={t.name}
+                    totalSeconds={t.total_seconds}
+                    remainingSeconds={t.remaining_seconds}
+                    soundType={t.sound_type}
+                    isRunning={t.phase === 'Running'}
+                    phase={t.phase}
+                    isSequenceStep={Boolean(t.sequence_id)}
+                    onPause={() => handlePauseResume(id)}
+                    onSkip={() => handleSkip(id)}
+                    onDelete={() => handleStop(id)}
+                  />
+                ))}
               </div>
             </>
           )}

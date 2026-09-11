@@ -161,13 +161,28 @@ export function resolveSequenceSteps(sequence: Sequence, settings: Settings): Re
   });
 }
 
+/**
+ * The key a timer lives under in the `timers` map.
+ *
+ * A standalone timer's slot is its own id. A sequence's slot is the
+ * *sequence's* id, which stays stable across all of its steps even though the
+ * timer's own `id` changes every step — that stability is what lets a running
+ * sequence keep the same card in place as it advances. Mirrors `slot_key`-style
+ * logic on the Rust side (see src-tauri/src/lib.rs), computed the same way.
+ */
+export function slotKeyOf(t: RustTimerState): string {
+  return t.sequence_id ?? t.id;
+}
+
+/** Soft cap on concurrently-running timers/sequences, mirrors MAX_CONCURRENT_TIMERS in Rust. */
+export const MAX_CONCURRENT_TIMERS = 8;
+
 // ─── Store interface ──────────────────────────────────────────────────────────
 
 interface TimerStore {
   // ── Engine state (driven by Rust) ──
-  activeTimer: RustTimerState | null;
-  isSequenceActive: boolean;
-  sequenceComplete: boolean;
+  /** Every concurrently-running timer/sequence, keyed by slotKeyOf(). */
+  timers: Record<string, RustTimerState>;
 
   // ── Persisted state ──
   history: HistoryItem[];
@@ -188,7 +203,7 @@ interface TimerStore {
   };
   stopwatchSessions: StopwatchSession[];
 
-  // ── Engine actions ──
+  // ── Engine actions ── (all keyed by slot id — see slotKeyOf())
   startTimer: (params: {
     id?: string;
     name: string;
@@ -199,17 +214,17 @@ interface TimerStore {
   startSequence: (sequence: Sequence) => Promise<void>;
   /** Start a sequence whose steps already carry explicit durations and tones. */
   startResolvedSequence: (input: ResolvedSequenceInput) => Promise<void>;
-  pause: () => Promise<void>;
-  resume: () => Promise<void>;
-  skip: () => Promise<void>;
-  stop: () => Promise<void>;
-  extendTimer: (seconds: number) => Promise<void>;
+  pause: (id: string) => Promise<void>;
+  resume: (id: string) => Promise<void>;
+  skip: (id: string) => Promise<void>;
+  stop: (id: string) => Promise<void>;
+  extendTimer: (id: string, seconds: number) => Promise<void>;
 
   // ── Event handlers (called internally by listeners) ──
   _onTick: (state: RustTimerState) => void;
   _onComplete: (state: RustTimerState, onPersist?: () => void) => Promise<void>;
-  _onSequenceStepStarted: (step: number) => void;
-  _onSequenceComplete: () => void;
+  _onSequenceStepStarted: (payload: { id: string; step: number }) => void;
+  _onSequenceComplete: (id: string) => void;
 
   // ── Legacy timer actions (for history/settings parts of the app) ──
   updateTimerSound: (id: string, soundType: string) => Promise<void>;
@@ -250,15 +265,16 @@ export const DEFAULT_SETTINGS: Settings = {
 };
 
 /**
- * Id of the last completion we acted on.
+ * Id of the last completion we acted on, per slot.
  *
  * `timer:complete` must be idempotent on this side too: a skip landing on the
  * same tick as the natural end, or a second window acking the same event, would
  * otherwise double-log history and advance the sequence twice (silently eating a
- * step). Cleared whenever a new step starts or the timer ticks, so a looping
- * sequence can legitimately complete the same step id again.
+ * step). Cleared whenever that slot's step starts or ticks, so a looping
+ * sequence can legitimately complete the same step id again — and keyed per
+ * slot so one timer's completion never blocks another's.
  */
-let lastCompletedId: string | null = null;
+const lastCompletedIdBySlot: Record<string, string> = {};
 
 /** How long a finished standalone timer stays on screen before the UI resets. */
 const COMPLETE_LINGER_MS = 8_000;
@@ -324,9 +340,7 @@ const IDLE_STOPWATCH: TimerStore['stopwatch'] = {
 
 export const useTimerStore = create<TimerStore>((set, get) => ({
   // Engine state
-  activeTimer: null,
-  isSequenceActive: false,
-  sequenceComplete: false,
+  timers: {},
 
   // Persisted state
   history: [],
@@ -347,15 +361,20 @@ export const useTimerStore = create<TimerStore>((set, get) => ({
 
   startTimer: async ({ id, name, totalSeconds, soundType, notificationMsg }) => {
     const { settings } = get();
-    lastCompletedId = null;
-    const timer = await invoke<RustTimerState>('cmd_start_timer', {
-      id: id ?? crypto.randomUUID(),
-      name,
-      totalSeconds,
-      soundType: soundType ?? settings.defaultSound,
-      notificationMsg: notificationMsg ?? `${name} complete!`,
-    });
-    set({ activeTimer: timer, isSequenceActive: false, sequenceComplete: false });
+    const slotId = id ?? crypto.randomUUID();
+    delete lastCompletedIdBySlot[slotId];
+    try {
+      const timer = await invoke<RustTimerState>('cmd_start_timer', {
+        id: slotId,
+        name,
+        totalSeconds,
+        soundType: soundType ?? settings.defaultSound,
+        notificationMsg: notificationMsg ?? `${name} complete!`,
+      });
+      set((s) => ({ timers: { ...s.timers, [slotKeyOf(timer)]: timer } }));
+    } catch (e) {
+      get().showToast(typeof e === 'string' ? e : 'Could not start that timer');
+    }
   },
 
   startSequence: async (sequence) => {
@@ -378,42 +397,51 @@ export const useTimerStore = create<TimerStore>((set, get) => ({
       get().showToast('Add at least one step first');
       return;
     }
-    lastCompletedId = null;
-    const timer = await invoke<RustTimerState>('cmd_start_sequence', { sequence: input });
-    set({ activeTimer: timer, isSequenceActive: true, sequenceComplete: false });
+    delete lastCompletedIdBySlot[input.id];
+    try {
+      const timer = await invoke<RustTimerState>('cmd_start_sequence', { sequence: input });
+      set((s) => ({ timers: { ...s.timers, [slotKeyOf(timer)]: timer } }));
+    } catch (e) {
+      get().showToast(typeof e === 'string' ? e : 'Could not start that sequence');
+    }
   },
 
-  pause: async () => {
-    const timer = await invoke<RustTimerState | null>('cmd_pause_timer');
-    if (timer) set({ activeTimer: timer });
+  pause: async (id) => {
+    const timer = await invoke<RustTimerState | null>('cmd_pause_timer', { id });
+    if (timer) set((s) => ({ timers: { ...s.timers, [id]: timer } }));
   },
 
-  resume: async () => {
-    const timer = await invoke<RustTimerState | null>('cmd_resume_timer');
-    if (timer) set({ activeTimer: timer });
+  resume: async (id) => {
+    const timer = await invoke<RustTimerState | null>('cmd_resume_timer', { id });
+    if (timer) set((s) => ({ timers: { ...s.timers, [id]: timer } }));
   },
 
-  skip: async () => {
-    await invoke('cmd_skip_timer');
+  skip: async (id) => {
+    await invoke('cmd_skip_timer', { id });
   },
 
-  extendTimer: async (seconds) => {
-    const timer = await invoke<RustTimerState | null>('cmd_extend_timer', { seconds });
-    if (timer) set({ activeTimer: timer });
+  extendTimer: async (id, seconds) => {
+    const timer = await invoke<RustTimerState | null>('cmd_extend_timer', { id, seconds });
+    if (timer) set((s) => ({ timers: { ...s.timers, [id]: timer } }));
   },
 
-  stop: async () => {
-    lastCompletedId = null;
-    await invoke('cmd_stop_timer');
-    set({ activeTimer: null, isSequenceActive: false, sequenceComplete: false });
+  stop: async (id) => {
+    delete lastCompletedIdBySlot[id];
+    await invoke('cmd_stop_timer', { id });
+    set((s) => {
+      const timers = { ...s.timers };
+      delete timers[id];
+      return { timers };
+    });
   },
 
   // ── Internal event handlers ─────────────────────────────────────────────────
 
   _onTick: (timerState) => {
-    lastCompletedId = null;
-    const previous = get().activeTimer;
-    set({ activeTimer: timerState });
+    const slot = slotKeyOf(timerState);
+    delete lastCompletedIdBySlot[slot];
+    const previous = get().timers[slot] ?? null;
+    set((s) => ({ timers: { ...s.timers, [slot]: timerState } }));
 
     const mark = crossedWarningMark(previous, timerState);
     if (mark === null) return;
@@ -434,10 +462,11 @@ export const useTimerStore = create<TimerStore>((set, get) => ({
   },
 
   _onComplete: async (timerState, onPersist?) => {
-    if (lastCompletedId === timerState.id) return;
-    lastCompletedId = timerState.id;
+    const slot = slotKeyOf(timerState);
+    if (lastCompletedIdBySlot[slot] === timerState.id) return;
+    lastCompletedIdBySlot[slot] = timerState.id;
 
-    set({ activeTimer: timerState });
+    set((s) => ({ timers: { ...s.timers, [slot]: timerState } }));
 
     const { settings, customSounds, stats } = get();
     const skipped = timerState.skipped === true;
@@ -486,15 +515,16 @@ export const useTimerStore = create<TimerStore>((set, get) => ({
     // skipping a step. A skip always chains straight into the next step —
     // gating it behind auto-start would leave the user stranded on a phase they
     // just asked to leave.
-    const { isSequenceActive: stillActive, settings: current } = get();
-    if (stillActive && timerState.sequence_id) {
+    const { settings: current } = get();
+    if (timerState.sequence_id) {
       try {
         const next = await invoke<RustTimerState | null>('cmd_next_sequence_step', {
+          id: slot,
           completedStep: timerState.sequence_step ?? null,
           startPaused: !skipped && !current.autoStartBreaks,
         });
         if (next) {
-          set({ activeTimer: next });
+          set((s) => ({ timers: { ...s.timers, [slot]: next } }));
           if (next.phase === 'Paused') {
             get().showToast(`Up next: ${next.name} — press Resume`);
           }
@@ -508,12 +538,12 @@ export const useTimerStore = create<TimerStore>((set, get) => ({
       // to be noticed, then return the UI to idle. A skip clears at once — the
       // user is already done with it.
       if (skipped) {
-        await get().stop();
+        await get().stop(slot);
       } else {
         setTimeout(() => {
-          const cur = get();
-          if (cur.activeTimer?.id === timerState.id && cur.activeTimer.phase === 'Complete') {
-            void cur.stop();
+          const cur = get().timers[slot];
+          if (cur?.id === timerState.id && cur.phase === 'Complete') {
+            void get().stop(slot);
           }
         }, COMPLETE_LINGER_MS);
       }
@@ -522,16 +552,21 @@ export const useTimerStore = create<TimerStore>((set, get) => ({
     onPersist?.();
   },
 
-  _onSequenceStepStarted: () => {
+  _onSequenceStepStarted: ({ id }) => {
     // A fresh step means the previous completion is fully handled; re-arm the
     // dedupe guard so a looping sequence can complete the same step id again.
-    lastCompletedId = null;
+    delete lastCompletedIdBySlot[id];
   },
 
-  _onSequenceComplete: () => {
-    lastCompletedId = null;
-    set({ isSequenceActive: false, sequenceComplete: true, activeTimer: null });
-    get().showToast('🎉 Sequence complete!');
+  _onSequenceComplete: (id) => {
+    delete lastCompletedIdBySlot[id];
+    const name = get().timers[id]?.name ?? 'Sequence';
+    set((s) => {
+      const timers = { ...s.timers };
+      delete timers[id];
+      return { timers };
+    });
+    get().showToast(`🎉 ${name} complete!`);
   },
 
   // ── Persisted/legacy actions ────────────────────────────────────────────────
@@ -540,10 +575,10 @@ export const useTimerStore = create<TimerStore>((set, get) => ({
   // copy, is what plays the tone on completion, so the choice has to reach it
   // via invoke() rather than just being set locally.
   updateTimerSound: async (id, soundType) => {
-    if (get().activeTimer?.id !== id) return;
+    if (!get().timers[id]) return;
     try {
-      const timer = await invoke<RustTimerState | null>('cmd_set_timer_sound', { soundType });
-      if (timer) set({ activeTimer: timer });
+      const timer = await invoke<RustTimerState | null>('cmd_set_timer_sound', { id, soundType });
+      if (timer) set((s) => ({ timers: { ...s.timers, [id]: timer } }));
     } catch (e) {
       console.warn('Failed to update timer sound:', e);
     }
@@ -729,11 +764,11 @@ export async function initTimerListeners(onPersist?: () => void): Promise<() => 
     listen<RustTimerState>('timer:complete', (e) => {
       void useTimerStore.getState()._onComplete(e.payload, onPersist);
     }),
-    listen<number>('sequence:step-started', (e) => {
+    listen<{ id: string; step: number }>('sequence:step-started', (e) => {
       useTimerStore.getState()._onSequenceStepStarted(e.payload);
     }),
-    listen('sequence:complete', () => {
-      useTimerStore.getState()._onSequenceComplete();
+    listen<string>('sequence:complete', (e) => {
+      useTimerStore.getState()._onSequenceComplete(e.payload);
     }),
   ]);
 
@@ -741,15 +776,14 @@ export async function initTimerListeners(onPersist?: () => void): Promise<() => 
   // against the wall clock first, so this reflects real elapsed time even if the
   // machine slept in between.
   try {
-    lastCompletedId = null;
-    const currentState = await invoke<RustTimerState | null>('cmd_get_timer_state');
-    if (currentState) {
-      useTimerStore.setState({
-        activeTimer: currentState,
-        isSequenceActive: Boolean(currentState.sequence_id),
-        sequenceComplete: false,
-      });
+    const currentStates = await invoke<RustTimerState[]>('cmd_list_timer_states');
+    const timers: Record<string, RustTimerState> = {};
+    for (const t of currentStates) {
+      const slot = slotKeyOf(t);
+      timers[slot] = t;
+      delete lastCompletedIdBySlot[slot];
     }
+    useTimerStore.setState({ timers });
   } catch (e) {
     console.warn('State rehydration failed:', e);
   }

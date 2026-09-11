@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time;
@@ -10,6 +11,11 @@ const TICK_INTERVAL_MS: u64 = 200;
 
 /// Hard ceiling on any single timer (24h), applied to both duration and extensions.
 pub const MAX_SECONDS: u32 = 86_400;
+
+/// Soft ceiling on how many timers/sequences can run at once. Each entry is
+/// cheap (one map slot, ticked every 200ms), so this exists to keep the UI and
+/// the window title legible rather than to protect any real resource limit.
+pub const MAX_CONCURRENT_TIMERS: usize = 8;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum TimerPhase {
@@ -193,11 +199,12 @@ fn now_ms() -> u128 {
         .unwrap_or(0)
 }
 
-// Shared mutable state wrapped in Arc<Mutex<>>
-pub type SharedTimerState = Arc<Mutex<Option<TimerState>>>;
+// Shared mutable state: every concurrently-running timer, keyed by slot id
+// (a standalone timer's own id, or a sequence's id — see lib.rs).
+pub type SharedTimerState = Arc<Mutex<HashMap<String, TimerState>>>;
 
 pub fn new_shared_state() -> SharedTimerState {
-    Arc::new(Mutex::new(None))
+    Arc::new(Mutex::new(HashMap::new()))
 }
 
 /// Lock that survives a poisoned mutex.
@@ -213,7 +220,10 @@ pub fn lock_or_recover<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 /// Spawns the authoritative tick loop. Runs for the lifetime of the app.
 ///
 /// It never mutates elapsed time itself — it only re-derives `remaining_seconds`
-/// from the deadline and emits when the visible value changes.
+/// from the deadline and emits when the visible value changes. With multiple
+/// concurrent timers, more than one entry can tick or complete in the same
+/// pass, so both are collected as vecs and emitted per-entry after the lock
+/// is released.
 pub async fn run_tick_loop(app: AppHandle, state: SharedTimerState) {
     let mut interval = time::interval(Duration::from_millis(TICK_INTERVAL_MS));
     interval.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
@@ -222,28 +232,30 @@ pub async fn run_tick_loop(app: AppHandle, state: SharedTimerState) {
         interval.tick().await;
 
         // Collect what to emit while holding the lock, then emit after releasing it.
-        let mut tick_event: Option<TimerState> = None;
-        let mut complete_event: Option<TimerState> = None;
+        let mut tick_events: Vec<TimerState> = Vec::new();
+        let mut complete_events: Vec<TimerState> = Vec::new();
 
         {
             let mut lock = lock_or_recover(&state);
-            if let Some(timer) = lock.as_mut() {
-                if timer.phase == TimerPhase::Running {
-                    let changed = timer.sync_remaining();
-                    if timer.remaining_seconds == 0 {
-                        if timer.complete(false) {
-                            complete_event = Some(timer.clone());
-                        }
-                    } else if changed {
-                        tick_event = Some(timer.clone());
+            for timer in lock.values_mut() {
+                if timer.phase != TimerPhase::Running {
+                    continue;
+                }
+                let changed = timer.sync_remaining();
+                if timer.remaining_seconds == 0 {
+                    if timer.complete(false) {
+                        complete_events.push(timer.clone());
                     }
+                } else if changed {
+                    tick_events.push(timer.clone());
                 }
             }
         }
 
-        if let Some(snapshot) = complete_event {
+        for snapshot in complete_events {
             let _ = app.emit("timer:complete", snapshot);
-        } else if let Some(snapshot) = tick_event {
+        }
+        for snapshot in tick_events {
             let _ = app.emit("timer:tick", snapshot);
         }
     }
