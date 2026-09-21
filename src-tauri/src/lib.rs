@@ -8,7 +8,9 @@ use timer_engine::{
 };
 use sequence_engine::{Sequence, SequenceStep};
 
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::{MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -347,7 +349,52 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 run_tick_loop(app_handle, timer_state_for_thread).await;
             });
+
+            // ── System tray setup ──────────────────────────────────────
+            let show_item = MenuItem::with_id(app, "show", "Show Chrono Sphere", true, None::<&str>)?;
+            let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
+
+            let _tray = TrayIconBuilder::new()
+                .icon(app.default_window_icon().cloned().expect("no app icon"))
+                .tooltip("Chrono Sphere")
+                .menu(&menu)
+                .show_menu_on_left_click(false)
+                .on_menu_event(|app, event| {
+                    match event.id().as_ref() {
+                        "show" => {
+                            if let Some(window) = app.get_webview_window("main") {
+                                let _ = window.show();
+                                let _ = window.unminimize();
+                                let _ = window.set_focus();
+                            }
+                        }
+                        "quit" => {
+                            app.exit(0);
+                        }
+                        _ => {}
+                    }
+                })
+                .on_tray_icon_event(|tray, event| {
+                    // Double-click (or single left-click) on tray icon restores the window
+                    if let TrayIconEvent::Click { button_state: MouseButtonState::Up, .. } = event {
+                        if let Some(window) = tray.app_handle().get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.unminimize();
+                            let _ = window.set_focus();
+                        }
+                    }
+                })
+                .build(app)?;
+
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            // Intercept the close button: hide to tray instead of quitting
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
+            }
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
