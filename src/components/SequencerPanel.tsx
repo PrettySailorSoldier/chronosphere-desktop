@@ -2,7 +2,10 @@ import { useEffect, useRef, useCallback, useState } from 'react';
 import { load } from '@tauri-apps/plugin-store';
 import { listen } from '@tauri-apps/api/event';
 import { useShallow } from 'zustand/react/shallow';
-import { useTimerStore, ResolvedStep } from '../store/timerStore';
+import {
+  useTimerStore, ResolvedStep, Sequence, CustomStep, PhaseType, StepKey, Settings,
+  isCustomStep, sequenceStepLabel, sequenceStepSeconds,
+} from '../store/timerStore';
 import styles from './SequencerPanel.module.css';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -11,7 +14,15 @@ interface Phase {
   id: string;
   label: string;
   durationSeconds: number;
-  type: 'work' | 'break' | 'transition';
+  type: PhaseType;
+}
+
+/** Shape of sequencer-state.json. `loop` and `name` were added later, so both are optional. */
+interface PersistedState {
+  phases: Phase[];
+  loop?: boolean;
+  /** Name the editor was last saved as / loaded from — prefills the save box. */
+  name?: string;
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -125,11 +136,52 @@ function toResolvedSteps(phases: Phase[]): ResolvedStep[] {
   });
 }
 
+/** Preset steps (from sequences built in Settings) mapped onto a sequencer colour. */
+const PRESET_TYPES: Record<StepKey, PhaseType> = {
+  pomodoro:   'work',
+  deepWork:   'work',
+  shortBreak: 'break',
+  longBreak:  'break',
+};
+
+/**
+ * Phases → a saved sequence's steps. Saved as custom steps so durations are
+ * fixed, with the tone and phase type baked in — the sequence then plays the
+ * same from Flow Sequences as it does here, and reloads looking the same.
+ */
+function toSavedSteps(phases: Phase[]): CustomStep[] {
+  return phases.map((p, i) => ({
+    label: p.label.trim() || `Phase ${i + 1}`,
+    seconds: p.durationSeconds,
+    sound: TYPE_SOUNDS[p.type],
+    type: p.type,
+  }));
+}
+
+/** A saved sequence → editable phases. Preset steps take today's preset lengths. */
+function fromSavedSequence(seq: Sequence, settings: Settings): Phase[] {
+  return seq.steps.flatMap((step) => {
+    if (!isCustomStep(step) && !(step in PRESET_TYPES)) return [];
+    return [{
+      id: genId(),
+      label: sequenceStepLabel(step),
+      durationSeconds: sequenceStepSeconds(step, settings),
+      type: isCustomStep(step) ? step.type ?? 'work' : PRESET_TYPES[step],
+    }];
+  });
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function SequencerPanel() {
   // ── Persisted phases ────────────────────────────────────────────────────────
   const [phases, setPhases] = useState<Phase[]>(DEFAULT_PHASES);
+  const [loop, setLoop] = useState(false);
+  const [savedName, setSavedName] = useState('');
+
+  // Saved sequences live in the shared store alongside the ones built in
+  // Settings, so they also show up under Flow Sequences.
+  const sequences = useTimerStore((s) => s.sequences);
 
   // ── Timer state — owned by the Rust engine, not this component ──────────────
   //
@@ -156,15 +208,21 @@ export function SequencerPanel() {
   const [dragOverIdx,   setDragOverIdx]   = useState<number | null>(null);
   const [newPhaseId,    setNewPhaseId]    = useState<string | null>(null);
   const [expandedEditId, setExpandedEditId] = useState<string | null>(null);
+  /** Name typed into the save box; null while the box is closed. */
+  const [saveDraft,     setSaveDraft]     = useState<string | null>(null);
 
   // ── Refs ────────────────────────────────────────────────────────────────────
   const storeRef     = useRef<Awaited<ReturnType<typeof load>> | null>(null);
   const mountedRef   = useRef(true);
   const phasesRef    = useRef<Phase[]>(phases);
+  const loopRef      = useRef(loop);
+  const savedNameRef = useRef(savedName);
   const activeIdxRef = useRef<number | null>(null);
   const dragIdxRef   = useRef<number | null>(null);
 
   phasesRef.current    = phases;
+  loopRef.current      = loop;
+  savedNameRef.current = savedName;
   activeIdxRef.current = activeIdx;
 
   // Flash the "complete" state, but only when our run actually reached the end —
@@ -195,10 +253,12 @@ export function SequencerPanel() {
       try {
         const s = await load('sequencer-state.json', { autoSave: false, defaults: {} });
         storeRef.current = s;
-        const saved = await s.get<{ phases: Phase[] }>('state');
+        const saved = await s.get<PersistedState>('state');
         if (saved?.phases?.length) {
           setPhases(saved.phases);
         }
+        if (typeof saved?.loop === 'boolean') setLoop(saved.loop);
+        if (saved?.name) setSavedName(saved.name);
       } catch (e) {
         console.warn('SequencerPanel: store load failed', e);
       }
@@ -209,10 +269,17 @@ export function SequencerPanel() {
   }, []); // intentionally empty — load once only
 
   // ── Persist to store (call after any phases mutation) ────────────────────────
+  // Loop and name are read from their refs, so handlers that change those must
+  // update the ref before calling this.
   const saveToStore = useCallback(async (updatedPhases: Phase[]) => {
     if (!storeRef.current) return;
     try {
-      await storeRef.current.set('state', { phases: updatedPhases });
+      const state: PersistedState = {
+        phases: updatedPhases,
+        loop:   loopRef.current,
+        name:   savedNameRef.current,
+      };
+      await storeRef.current.set('state', state);
       await storeRef.current.save();
     } catch (e) {
       console.warn('SequencerPanel: save failed', e);
@@ -238,7 +305,7 @@ export function SequencerPanel() {
         id: SEQUENCER_ID,
         name: 'Sequencer',
         steps,
-        loopEnabled: false,
+        loopEnabled: loopRef.current,
       });
     } catch (e) {
       console.warn('Sequencer start failed:', e);
@@ -359,10 +426,73 @@ export function SequencerPanel() {
     // Loading a template replaces the phase list wholesale, so any run based on
     // the old list has to end with it.
     if (activeIdxRef.current !== null) void useTimerStore.getState().stop(SEQUENCER_ID);
+    // A template is a fresh start, not an edit of whatever was saved last.
+    savedNameRef.current = '';
+    setSavedName('');
     setIsComplete(false);
     setPhases(newPhases);
     saveToStore(newPhases);
   }, [saveToStore]);
+
+  // ── Loop + saved sequences ────────────────────────────────────────────────────
+  const handleToggleLoop = useCallback(() => {
+    const next = !loopRef.current;
+    loopRef.current = next;
+    setLoop(next);
+    saveToStore(phasesRef.current);
+    // Takes effect on the run in progress too, not just the next one.
+    if (activeIdxRef.current !== null) {
+      void useTimerStore.getState().setSequenceLoop(SEQUENCER_ID, next);
+    }
+  }, [saveToStore]);
+
+  const handleSaveCommit = useCallback(() => {
+    const name = (saveDraft ?? '').trim();
+    if (!name) return;
+    const store = useTimerStore.getState();
+    const steps = toSavedSteps(phasesRef.current);
+    if (steps.length === 0) { store.showToast('Add at least one phase first'); return; }
+
+    // Re-saving under an existing name updates that sequence in place instead of
+    // piling up near-duplicates every time the user tweaks and saves again.
+    const existing = store.sequences.find(s => s.name.trim().toLowerCase() === name.toLowerCase());
+    const saved: Sequence = {
+      id:    existing?.id ?? Date.now().toString(),
+      name,
+      steps,
+      loop:  loopRef.current,
+    };
+    store.setSequences(existing
+      ? store.sequences.map(s => s.id === existing.id ? saved : s)
+      : [...store.sequences, saved]);
+
+    savedNameRef.current = name;
+    setSavedName(name);
+    saveToStore(phasesRef.current);
+    setSaveDraft(null);
+    store.showToast(existing ? `Updated "${name}" ✓` : `Saved "${name}" ✓`);
+  }, [saveDraft, saveToStore]);
+
+  const handleLoadSaved = useCallback((seq: Sequence) => {
+    const store = useTimerStore.getState();
+    const loaded = fromSavedSequence(seq, store.settings);
+    if (loaded.length === 0) { store.showToast('That sequence has no valid steps'); return; }
+    // Same as a template: replacing the phase list ends any run built on the old one.
+    if (activeIdxRef.current !== null) void store.stop(SEQUENCER_ID);
+    loopRef.current      = seq.loop;
+    savedNameRef.current = seq.name;
+    setLoop(seq.loop);
+    setSavedName(seq.name);
+    setIsComplete(false);
+    setPhases(loaded);
+    saveToStore(loaded);
+  }, [saveToStore]);
+
+  const handleDeleteSaved = useCallback((seq: Sequence) => {
+    if (!window.confirm(`Delete saved sequence "${seq.name}"?`)) return;
+    const store = useTimerStore.getState();
+    store.setSequences(store.sequences.filter(s => s.id !== seq.id));
+  }, []);
 
   // ── Drag and drop ─────────────────────────────────────────────────────────────
   const handleDragStart = useCallback((idx: number) => {
@@ -414,6 +544,9 @@ export function SequencerPanel() {
   // ── Derived values for render ─────────────────────────────────────────────────
   const activePhase   = activeIdx !== null ? phases[activeIdx] ?? null : null;
   const totalDuration = phases.reduce((acc, p) => acc + p.durationSeconds, 0) || 1;
+  const willOverwrite = saveDraft !== null && sequences.some(
+    s => s.name.trim().toLowerCase() === saveDraft.trim().toLowerCase(),
+  );
 
   // Measure progress against the engine's own total for this step, so a live
   // ±5m adjustment doesn't make the ring disagree with the digits.
@@ -572,6 +705,84 @@ export function SequencerPanel() {
             ))}
           </div>
         )}
+
+        {/* Saved sequences — hidden mid-run for the same reason as templates */}
+        {!started && sequences.length > 0 && (
+          <>
+            <div className={styles.sectionLabel}>Saved</div>
+            <div className={styles.templates}>
+              {sequences.map(seq => (
+                <span
+                  key={seq.id}
+                  className={[styles.savedPill, seq.name === savedName ? styles.savedPillActive : ''].filter(Boolean).join(' ')}
+                >
+                  <button
+                    className={styles.savedPillLoad}
+                    onClick={() => handleLoadSaved(seq)}
+                    title={`Load "${seq.name}" — ${seq.steps.length} phases${seq.loop ? ', loops' : ''}`}
+                  >
+                    {seq.loop ? '🔁 ' : ''}{seq.name}
+                  </button>
+                  <button
+                    className={styles.savedPillDelete}
+                    onClick={() => handleDeleteSaved(seq)}
+                    title="Delete saved sequence"
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          </>
+        )}
+
+        {/* Loop toggle + save */}
+        <div className={styles.sequenceBar}>
+          <button
+            className={[styles.loopToggle, loop ? styles.loopToggleOn : ''].filter(Boolean).join(' ')}
+            onClick={handleToggleLoop}
+            aria-pressed={loop}
+            title={loop ? 'Loops back to the first phase after the last — click to play once' : 'Plays once — click to loop'}
+          >
+            🔁 {loop ? 'Looping' : 'Loop off'}
+          </button>
+
+          {saveDraft === null ? (
+            <button
+              className={styles.saveBtn}
+              onClick={() => setSaveDraft(savedName)}
+              disabled={phases.length === 0}
+              title="Save these phases as a named sequence"
+            >
+              💾 Save sequence
+            </button>
+          ) : (
+            <div className={styles.saveForm}>
+              <input
+                className={styles.editorInput}
+                value={saveDraft}
+                onChange={e => setSaveDraft(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') handleSaveCommit();
+                  if (e.key === 'Escape') setSaveDraft(null);
+                }}
+                placeholder="Sequence name…"
+                autoFocus
+              />
+              <button
+                className={styles.saveBtn}
+                onClick={handleSaveCommit}
+                disabled={!saveDraft.trim()}
+                title={willOverwrite ? 'Replace the saved sequence with this name' : undefined}
+              >
+                {willOverwrite ? 'Update' : 'Save'}
+              </button>
+              <button className={styles.saveCancelBtn} onClick={() => setSaveDraft(null)} title="Cancel">
+                ✕
+              </button>
+            </div>
+          )}
+        </div>
 
         <div className={styles.sectionLabel}>Phases</div>
 

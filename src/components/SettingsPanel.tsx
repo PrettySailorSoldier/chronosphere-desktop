@@ -310,6 +310,15 @@ export const SettingsPanel: React.FC<Props> = ({ onClose }) => {
     setSequences(sequences.filter((s) => s.id !== id));
   };
 
+  // Applies to the next start — and to the current run too, if one is going.
+  const toggleSequenceLoop = (id: string) => {
+    const target = sequences.find((s) => s.id === id);
+    if (!target) return;
+    const loop = !target.loop;
+    setSequences(sequences.map((s) => (s.id === id ? { ...s, loop } : s)));
+    void useTimerStore.getState().setSequenceLoop(id, loop);
+  };
+
   const exportData = () => {
     const s = useTimerStore.getState();
     const data = {
@@ -545,13 +554,18 @@ export const SettingsPanel: React.FC<Props> = ({ onClose }) => {
                   <div className="seq-item" key={s.id}>
                     <span>
                       {s.name} ({s.steps.length} steps · {fmtTotal(sequenceTotalSeconds(s.steps))})
-                      {s.loop ? ' 🔁' : ''}
                       <span className="seq-item-steps">
                         {s.steps
                           .map((step) => `${sequenceStepLabel(step)} ${fmtStepDuration(sequenceStepSeconds(step, settings))}`)
                           .join(' → ')}
                       </span>
                     </span>
+                    <button
+                      className={`seq-item-loop${s.loop ? ' on' : ''}`}
+                      onClick={() => toggleSequenceLoop(s.id)}
+                      title={s.loop ? 'Looping — click to play once' : 'Plays once — click to loop'}
+                      aria-pressed={s.loop}
+                    >🔁</button>
                     <button className="seq-item-delete" onClick={() => deleteSequence(s.id)}>🗑</button>
                   </div>
                 ))}

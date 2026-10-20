@@ -534,6 +534,9 @@ body {
 .seq-item { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px; background: var(--dark-card-light); border-radius: 8px; font-size: 12px; color: var(--pale-cyan); }
 .seq-item-steps { display: block; margin-top: 3px; font-size: 10px; color: rgba(207,245,255,0.45); }
 .seq-item-delete { background: none; border: none; color: #ef4444; cursor: pointer; font-size: 14px; }
+.seq-item-loop { margin-left: auto; background: none; border: 1px solid transparent; border-radius: 6px; cursor: pointer; font-size: 13px; padding: 2px 4px; opacity: 0.3; filter: grayscale(1); transition: all 0.18s; }
+.seq-item-loop:hover { opacity: 0.7; }
+.seq-item-loop.on { opacity: 1; filter: none; border-color: rgba(0,240,255,0.35); background: rgba(0,240,255,0.08); }
 .seq-builder { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; padding: 10px; border: 1px solid rgba(0,240,255,0.1); border-radius: 10px; }
 .seq-builder input { padding: 7px; border: 1px solid var(--dark-border); border-radius: 6px; background: var(--deep-black); color: var(--pale-cyan); font-size: 12px; width: 100%; }
 .seq-builder input:focus { outline: none; border-color: var(--cyan-glow); }

@@ -45,7 +45,11 @@ export interface CustomStep {
   seconds: number;
   /** Falls back to the user's default tone when unset. */
   sound?: string;
+  /** Sequencer colour/tone category, kept so a saved sequence reloads as it was built. */
+  type?: PhaseType;
 }
+
+export type PhaseType = 'work' | 'break' | 'transition';
 
 /** A saved sequence step: a preset key, or a hand-entered duration. */
 export type SequenceStep = StepKey | CustomStep;
@@ -219,6 +223,8 @@ interface TimerStore {
   skip: (id: string) => Promise<void>;
   stop: (id: string) => Promise<void>;
   extendTimer: (id: string, seconds: number) => Promise<void>;
+  /** Flip looping on a sequence that's already running; no-op if the slot is empty. */
+  setSequenceLoop: (id: string, loopEnabled: boolean) => Promise<void>;
 
   // ── Event handlers (called internally by listeners) ──
   _onTick: (state: RustTimerState) => void;
@@ -423,6 +429,10 @@ export const useTimerStore = create<TimerStore>((set, get) => ({
   extendTimer: async (id, seconds) => {
     const timer = await invoke<RustTimerState | null>('cmd_extend_timer', { id, seconds });
     if (timer) set((s) => ({ timers: { ...s.timers, [id]: timer } }));
+  },
+
+  setSequenceLoop: async (id, loopEnabled) => {
+    await invoke<boolean>('cmd_set_sequence_loop', { id, loopEnabled });
   },
 
   stop: async (id) => {

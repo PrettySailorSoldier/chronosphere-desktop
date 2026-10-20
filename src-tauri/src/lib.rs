@@ -288,6 +288,24 @@ fn cmd_extend_timer(
     snapshot
 }
 
+/// Turn looping on or off for a sequence that is already running, so the user
+/// can decide to keep going (or let it wind down) without restarting it.
+/// Returns false when no sequence occupies that slot.
+#[tauri::command]
+fn cmd_set_sequence_loop(
+    id: String,
+    loop_enabled: bool,
+    sequence_state: State<SharedSequenceState>,
+) -> bool {
+    match lock_or_recover(&sequence_state).get_mut(&id) {
+        Some(sequence) => {
+            sequence.loop_enabled = loop_enabled;
+            true
+        }
+        None => false,
+    }
+}
+
 /// Stop and clear one timer/sequence slot, leaving every other slot untouched.
 #[tauri::command]
 fn cmd_stop_timer(
@@ -340,6 +358,7 @@ pub fn run() {
             cmd_skip_timer,
             cmd_set_timer_sound,
             cmd_extend_timer,
+            cmd_set_sequence_loop,
             cmd_stop_timer,
             cmd_list_timer_states,
         ])
