@@ -6,8 +6,20 @@ interface Props {
   onStart: (h: number, m: number, s: number, name: string, sound: string, msg: string) => void;
 }
 
+/** Keep a number field within range as the user types; blank stays blank. */
+function clampField(raw: string, max: number): string {
+  if (raw === '') return '';
+  const n = parseInt(raw, 10);
+  if (Number.isNaN(n)) return '';
+  return String(Math.min(max, Math.max(0, n)));
+}
+
 export const CustomTimerForm: React.FC<Props> = ({ onStart }) => {
-  const { settings, customSounds, addCustomSound, showToast } = useTimerStore();
+  // Narrow selectors — reading the whole store re-rendered this on every engine tick.
+  const defaultSound   = useTimerStore((s) => s.settings.defaultSound);
+  const customSounds   = useTimerStore((s) => s.customSounds);
+  const addCustomSound = useTimerStore((s) => s.addCustomSound);
+  const showToast      = useTimerStore((s) => s.showToast);
   const [collapsed, setCollapsed] = useState(true);
   const [hours, setHours]   = useState('');
   const [mins, setMins]     = useState('');
@@ -15,10 +27,11 @@ export const CustomTimerForm: React.FC<Props> = ({ onStart }) => {
   const [name, setName]     = useState('');
   // Starts from the user's chosen default tone rather than always "chime", so
   // this form agrees with what Preset Buttons and Settings already show.
-  const [sound, setSound]   = useState(settings.defaultSound);
+  const [sound, setSound]   = useState(defaultSound);
   const [msg, setMsg]       = useState('');
 
-  const handleStart = () => {
+  const handleStart = (e?: React.FormEvent) => {
+    e?.preventDefault();
     const h = parseInt(hours) || 0;
     const m = parseInt(mins) || 0;
     const s = parseInt(secs) || 0;
@@ -64,13 +77,14 @@ export const CustomTimerForm: React.FC<Props> = ({ onStart }) => {
         <button className="custom-form-toggle" tabIndex={-1}>{collapsed ? '▼ Expand' : '▲ Collapse'}</button>
       </div>
 
-      {!collapsed && <div className="custom-form-body">
+      {/* A real form, so Enter in any field starts the timer. */}
+      {!collapsed && <form className="custom-form-body" onSubmit={handleStart}>
       <div className="input-group">
-        <input type="number" placeholder="0" min="0" max="23" value={hours} onChange={(e) => setHours(e.target.value)} />
+        <input type="number" placeholder="0" min="0" max="24" value={hours} onChange={(e) => setHours(clampField(e.target.value, 24))} autoFocus />
         <span>h</span>
-        <input type="number" placeholder="0" min="0" max="59" value={mins}  onChange={(e) => setMins(e.target.value)} />
+        <input type="number" placeholder="0" min="0" max="59" value={mins}  onChange={(e) => setMins(clampField(e.target.value, 59))} />
         <span>m</span>
-        <input type="number" placeholder="0" min="0" max="59" value={secs}  onChange={(e) => setSecs(e.target.value)} />
+        <input type="number" placeholder="0" min="0" max="59" value={secs}  onChange={(e) => setSecs(clampField(e.target.value, 59))} />
         <span>s</span>
       </div>
 
@@ -113,8 +127,8 @@ export const CustomTimerForm: React.FC<Props> = ({ onStart }) => {
         />
       </div>
 
-      <button className="start-btn" onClick={handleStart}>Start Timer</button>
-      </div>}
+      <button type="submit" className="start-btn">Start Timer</button>
+      </form>}
     </div>
   );
 };

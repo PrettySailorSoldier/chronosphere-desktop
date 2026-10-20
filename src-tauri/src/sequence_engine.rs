@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::timer_engine::MAX_SECONDS;
+use crate::timer_engine::{TimerKind, MAX_SECONDS};
 
 /// A fully resolved step: label, duration and tone are decided before the
 /// sequence starts.
@@ -16,6 +16,8 @@ pub struct SequenceStep {
     pub seconds: u32,
     pub sound: String,
     pub notification: String,
+    #[serde(default)]
+    pub kind: TimerKind,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -82,6 +84,7 @@ mod tests {
             seconds,
             sound: "chime".into(),
             notification: format!("{label} complete!"),
+            kind: TimerKind::Focus,
         }
     }
 
@@ -139,6 +142,22 @@ mod tests {
         let mut s = Sequence::new("s".into(), "n".into(), vec![step("Solo", 60)], true).unwrap();
         assert!(s.advance());
         assert_eq!(s.current_step, 0);
+    }
+
+    #[test]
+    fn step_kind_defaults_to_focus_and_reads_lowercase() {
+        // Steps saved before kinds existed carry no `kind` field.
+        let legacy: SequenceStep = serde_json::from_str(
+            r#"{"label":"Focus","seconds":60,"sound":"chime","notification":"done"}"#,
+        )
+        .unwrap();
+        assert_eq!(legacy.kind, TimerKind::Focus);
+
+        let rest: SequenceStep = serde_json::from_str(
+            r#"{"label":"Rest","seconds":60,"sound":"chime","notification":"done","kind":"break"}"#,
+        )
+        .unwrap();
+        assert_eq!(rest.kind, TimerKind::Break);
     }
 
     #[test]

@@ -132,6 +132,7 @@ function toResolvedSteps(phases: Phase[]): ResolvedStep[] {
       seconds: p.durationSeconds,
       sound: TYPE_SOUNDS[p.type],
       notification: `${label} complete!`,
+      kind: p.type === 'work' ? 'focus' : 'break',
     };
   });
 }
@@ -604,6 +605,9 @@ export function SequencerPanel() {
         })}
       </div>
 
+      {/* Ring + controls — sits beside the editor when the window is wide */}
+      <div className={styles.player}>
+
       {/* ── SECTION 2: Timer Display ── */}
       <div className={styles.timerDisplay}>
         <svg
@@ -686,6 +690,7 @@ export function SequencerPanel() {
             +5m
           </button>
         )}
+      </div>
       </div>
 
       {/* ── SECTION 4 + 5: Phase Editor ── */}

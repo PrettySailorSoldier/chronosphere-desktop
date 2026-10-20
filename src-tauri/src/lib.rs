@@ -3,13 +3,13 @@ mod timer_engine;
 mod sequence_engine;
 
 use timer_engine::{
-    lock_or_recover, new_shared_state, run_tick_loop, SharedTimerState, TimerState,
+    lock_or_recover, new_shared_state, run_tick_loop, SharedTimerState, TimerKind, TimerState,
     MAX_CONCURRENT_TIMERS, MAX_SECONDS,
 };
 use sequence_engine::{Sequence, SequenceStep};
 
 use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
-use tauri::menu::{Menu, MenuItem};
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -30,6 +30,8 @@ struct SequenceStepStarted {
     step: usize,
 }
 
+const TRAY_ID: &str = "main";
+
 fn cap_error() -> String {
     format!("Too many timers running (max {MAX_CONCURRENT_TIMERS}). Stop one first.")
 }
@@ -48,6 +50,8 @@ struct SequenceStepInput {
     sound: Option<String>,
     #[serde(default)]
     notification: Option<String>,
+    #[serde(default)]
+    kind: TimerKind,
 }
 
 #[derive(Deserialize)]
@@ -72,6 +76,7 @@ impl From<SequenceStepInput> for SequenceStep {
             seconds: s.seconds,
             sound: s.sound.filter(|x| !x.is_empty()).unwrap_or_else(|| "chime".to_string()),
             notification,
+            kind: s.kind,
         }
     }
 }
@@ -92,7 +97,8 @@ fn timer_for_current_step(sequence: &Sequence, start_paused: bool) -> Option<Tim
             sequence.id.clone(),
             sequence.current_step,
             sequence.total_steps(),
-        ),
+        )
+        .with_kind(step.kind),
     )
 }
 
@@ -114,6 +120,7 @@ fn cmd_start_timer(
     total_seconds: u32,
     sound_type: String,
     notification_msg: String,
+    kind: Option<TimerKind>,
     timer_state: State<SharedTimerState>,
 ) -> Result<TimerState, String> {
     if total_seconds == 0 {
@@ -128,7 +135,8 @@ fn cmd_start_timer(
         return Err(cap_error());
     }
 
-    let new_timer = TimerState::new(id.clone(), name, total_seconds, sound_type, notification_msg, false);
+    let new_timer = TimerState::new(id.clone(), name, total_seconds, sound_type, notification_msg, false)
+        .with_kind(kind.unwrap_or_default());
     lock.insert(id, new_timer.clone());
     Ok(new_timer)
 }
@@ -306,6 +314,15 @@ fn cmd_set_sequence_loop(
     }
 }
 
+/// Mirror the live countdown into the tray tooltip, so it can be read without
+/// opening the window. The frontend already formats it for the window title.
+#[tauri::command]
+fn cmd_set_tray_tooltip(app: AppHandle, text: String) {
+    if let Some(tray) = app.tray_by_id(TRAY_ID) {
+        let _ = tray.set_tooltip(Some(text));
+    }
+}
+
 /// Stop and clear one timer/sequence slot, leaving every other slot untouched.
 #[tauri::command]
 fn cmd_stop_timer(
@@ -359,6 +376,7 @@ pub fn run() {
             cmd_set_timer_sound,
             cmd_extend_timer,
             cmd_set_sequence_loop,
+            cmd_set_tray_tooltip,
             cmd_stop_timer,
             cmd_list_timer_states,
         ])
@@ -370,11 +388,28 @@ pub fn run() {
             });
 
             // ── System tray setup ──────────────────────────────────────
+            // Timer actions are handed to the frontend as `tray:action` events —
+            // it owns preset durations and tones, so it does the actual starting.
+            let toggle_item = MenuItem::with_id(app, "toggle", "Pause / Resume All", true, None::<&str>)?;
+            let pomodoro_item = MenuItem::with_id(app, "start:pomodoro", "Start Pomodoro", true, None::<&str>)?;
+            let short_item = MenuItem::with_id(app, "start:shortBreak", "Start Short Break", true, None::<&str>)?;
+            let deep_item = MenuItem::with_id(app, "start:deepWork", "Start Deep Work", true, None::<&str>)?;
+            let mini_item = MenuItem::with_id(app, "mini", "Mini Mode", true, None::<&str>)?;
             let show_item = MenuItem::with_id(app, "show", "Show Chrono Sphere", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
+            let menu = Menu::with_items(app, &[
+                &toggle_item,
+                &PredefinedMenuItem::separator(app)?,
+                &pomodoro_item,
+                &short_item,
+                &deep_item,
+                &PredefinedMenuItem::separator(app)?,
+                &mini_item,
+                &show_item,
+                &quit_item,
+            ])?;
 
-            let _tray = TrayIconBuilder::new()
+            let _tray = TrayIconBuilder::with_id(TRAY_ID)
                 .icon(app.default_window_icon().cloned().expect("no app icon"))
                 .tooltip("Chrono Sphere")
                 .menu(&menu)
@@ -391,7 +426,17 @@ pub fn run() {
                         "quit" => {
                             app.exit(0);
                         }
-                        _ => {}
+                        "mini" => {
+                            // Mini mode is a view of the main window, so it has to be visible.
+                            if let Some(window) = app.get_webview_window("main") {
+                                let _ = window.show();
+                                let _ = window.unminimize();
+                            }
+                            let _ = app.emit("tray:action", "mini");
+                        }
+                        other => {
+                            let _ = app.emit("tray:action", other);
+                        }
                     }
                 })
                 .on_tray_icon_event(|tray, event| {

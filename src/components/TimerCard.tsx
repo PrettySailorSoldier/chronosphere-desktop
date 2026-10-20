@@ -14,6 +14,9 @@ interface Props {
   phase: TimerPhase;
   /** Part of a running sequence — skipping advances rather than ending everything. */
   isSequenceStep?: boolean;
+  /** Zero-based step index and step count, shown as "Step 2 of 6". */
+  sequenceStep?: number;
+  sequenceTotalSteps?: number;
   onPause: () => void;
   onSkip: () => void;
   onDelete: () => void;
@@ -45,7 +48,7 @@ const PHASE_LABELS: Record<TimerPhase, string> = {
 
 export const TimerCard: React.FC<Props> = ({
   id, name, totalSeconds, remainingSeconds, isRunning, soundType = 'chime',
-  phase, isSequenceStep = false, onPause, onSkip, onDelete,
+  phase, isSequenceStep = false, sequenceStep, sequenceTotalSteps, onPause, onSkip, onDelete,
 }) => {
   const customSounds = useTimerStore((s) => s.customSounds);
   const { updateTimerSound, extendTimer, showToast } = useTimerStore(
@@ -69,7 +72,14 @@ export const TimerCard: React.FC<Props> = ({
   return (
     <div className="timer-card">
       <div className="timer-header">
-        <span className="timer-name">{name}</span>
+        <span className="timer-name">
+          {name}
+          {/* Step progress used to live in a separate card above the timers,
+              which repeated the same running sequence a second time. */}
+          {isSequenceStep && sequenceStep !== undefined && sequenceTotalSteps !== undefined && (
+            <span className="timer-step"> · step {sequenceStep + 1}/{sequenceTotalSteps}</span>
+          )}
+        </span>
         {/* Reported the phase as a running/paused binary, so a finished timer
             sat there claiming to be paused. */}
         <span className="timer-end-time">{PHASE_LABELS[phase]}</span>

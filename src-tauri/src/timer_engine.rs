@@ -25,6 +25,16 @@ pub enum TimerPhase {
     Complete,
 }
 
+/// Whether a timer is work or rest. Stats only count focus time, and the engine
+/// can't tell a "Break" from a "Focus" by its name, so the caller says which.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum TimerKind {
+    #[default]
+    Focus,
+    Break,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TimerState {
     pub id: String,
@@ -42,6 +52,8 @@ pub struct TimerState {
     /// it ran out of time. The frontend uses this to avoid logging skipped phases
     /// as completed work and to stay quiet instead of playing the completion tone.
     pub skipped: bool,
+    #[serde(default)]
+    pub kind: TimerKind,
 
     /// Wall-clock deadline as unix epoch milliseconds. `Some` only while Running.
     ///
@@ -74,6 +86,7 @@ impl TimerState {
             sequence_step: None,
             sequence_total_steps: None,
             skipped: false,
+            kind: TimerKind::Focus,
             ends_at_ms: None,
         };
         if !start_paused {
@@ -86,6 +99,11 @@ impl TimerState {
         self.sequence_id = Some(id);
         self.sequence_step = Some(step);
         self.sequence_total_steps = Some(total_steps);
+        self
+    }
+
+    pub fn with_kind(mut self, kind: TimerKind) -> Self {
+        self.kind = kind;
         self
     }
 

@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import {
-  useTimerStore, Sequence, SequenceStep, Settings, CustomSound, HistoryItem, Stats,
+  useTimerStore, Sequence, SequenceStep, Settings, CustomSound, HistoryItem, Stats, PresetKey,
   StopwatchSession, DEFAULT_SETTINGS, WARNING_MARKS_SECONDS,
   isCustomStep, sequenceStepLabel, sequenceStepSeconds,
 } from '../store/timerStore';
@@ -46,21 +47,76 @@ function fmtStepDuration(seconds: number): string {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
 }
 
+const PRESET_ROWS: ReadonlyArray<readonly [PresetKey, string]> = [
+  ['pomodoro', '🍅 Pomodoro'], ['shortBreak', '☕ Short Break'], ['longBreak', '🌙 Long Break'],
+  ['deepWork', '🎯 Deep Work'], ['writing', '✍️ Writing'], ['planning', '📋 Planning'],
+];
+
+/**
+ * Minutes field that applies as soon as it holds a valid number. Keeps its own
+ * text so the user can clear it mid-edit without it snapping to 1; an invalid
+ * value is put back to the saved one on blur.
+ */
+const PresetField: React.FC<{ value: number; onCommit: (minutes: number) => void }> = ({ value, onCommit }) => {
+  const [text, setText] = useState(String(value));
+  useEffect(() => { setText(String(value)); }, [value]);
+  return (
+    <input
+      className="settings-input"
+      type="number" min={1} max={180}
+      value={text}
+      onChange={(e) => {
+        setText(e.target.value);
+        const n = parseInt(e.target.value, 10);
+        if (n >= 1 && n <= 180) onCommit(n);
+      }}
+      onBlur={() => setText(String(value))}
+    />
+  );
+};
+
 export const SettingsPanel: React.FC<Props> = ({ onClose }) => {
   const {
     settings, setSettings, sequences, setSequences, history, customSounds,
     addCustomSound, removeCustomSound, renameCustomSound, clearHistory, hydrate, showToast,
-  } = useTimerStore();
+  } = useTimerStore(useShallow((s) => ({
+    settings: s.settings,
+    setSettings: s.setSettings,
+    sequences: s.sequences,
+    setSequences: s.setSequences,
+    history: s.history,
+    customSounds: s.customSounds,
+    addCustomSound: s.addCustomSound,
+    removeCustomSound: s.removeCustomSound,
+    renameCustomSound: s.renameCustomSound,
+    clearHistory: s.clearHistory,
+    hydrate: s.hydrate,
+    showToast: s.showToast,
+  })));
   const [tab, setTab] = useState<Tab>('presets');
 
-  // Local preset drafts
-  const [presets, setPresets] = useState({ ...settings.presets });
-  const [volume, setVolume] = useState(settings.volume);
-  const [soundEnabled, setSoundEnabled] = useState(settings.soundEnabled);
-  const [notifEnabled, setNotifEnabled] = useState(settings.notificationsEnabled);
-  const [warnEnabled, setWarnEnabled] = useState(settings.warningsEnabled);
-  const [autoBreaks, setAutoBreaks]   = useState(settings.autoStartBreaks);
-  const [defaultSound, setDefaultSound] = useState(settings.defaultSound);
+  // Every setting applies the moment it changes. Presets and Sound used to keep
+  // a local draft behind a Save button, so closing the panel quietly threw away
+  // edits — including toggles that already looked switched on. Reads the latest
+  // state rather than the render's copy so quick successive edits don't clobber
+  // each other.
+  const updateSettings = (patch: Partial<Settings>) =>
+    setSettings({ ...useTimerStore.getState().settings, ...patch });
+
+  const {
+    volume, soundEnabled, defaultSound,
+    notificationsEnabled: notifEnabled,
+    warningsEnabled: warnEnabled,
+    autoStartBreaks: autoBreaks,
+  } = settings;
+  const setVolume       = (v: number)  => updateSettings({ volume: v });
+  const setSoundEnabled = (v: boolean) => updateSettings({ soundEnabled: v });
+  const setNotifEnabled = (v: boolean) => updateSettings({ notificationsEnabled: v });
+  const setWarnEnabled  = (v: boolean) => updateSettings({ warningsEnabled: v });
+  const setAutoBreaks   = (v: boolean) => updateSettings({ autoStartBreaks: v });
+  const setDefaultSound = (v: string)  => updateSettings({ defaultSound: v });
+  const setPreset = (key: PresetKey, minutes: number) =>
+    updateSettings({ presets: { ...useTimerStore.getState().settings.presets, [key]: minutes } });
 
   // Sequence builder
   const [seqName, setSeqName] = useState('');
@@ -117,20 +173,6 @@ export const SettingsPanel: React.FC<Props> = ({ onClose }) => {
       localStorage.removeItem(DRAFT_KEY);
     }
   }, [seqName, seqSteps, seqLoop, draftRestored]);
-
-  const saveSettings = () => {
-    const updated: Settings = {
-      presets: { ...presets },
-      volume,
-      soundEnabled,
-      notificationsEnabled: notifEnabled,
-      warningsEnabled: warnEnabled,
-      autoStartBreaks: autoBreaks,
-      defaultSound,
-    };
-    setSettings(updated);
-    showToast('Settings saved ✓');
-  };
 
   const stopSound = () => {
     if (audioRef.current) {
@@ -224,9 +266,8 @@ export const SettingsPanel: React.FC<Props> = ({ onClose }) => {
 
   const deleteTone = (cs: CustomSound) => {
     if (previewingToneId === cs.id) { stopSound(); setPreviewingToneId(null); }
+    // The store already falls back to chime if this was the default tone.
     removeCustomSound(cs.id);
-    // Keep the local draft in sync if the deleted tone was selected
-    if (defaultSound === `custom_${cs.id}`) setDefaultSound('chime');
     showToast(`Deleted "${cs.name}"`);
   };
 
@@ -400,15 +441,10 @@ export const SettingsPanel: React.FC<Props> = ({ onClose }) => {
         {tab === 'presets' && (
           <div className="settings-group">
             <div className="settings-section-title">Timer Durations (minutes)</div>
-            {([['pomodoro', '🍅 Pomodoro'], ['shortBreak', '☕ Short Break'], ['longBreak', '🌙 Long Break'], ['deepWork', '🎯 Deep Work'], ['writing', '✍️ Writing'], ['planning', '📋 Planning'], ['deep', '🦾 Deep']] as const).map(([k, label]) => (
+            {PRESET_ROWS.map(([k, label]) => (
               <div className="settings-row" key={k}>
                 <span className="settings-label">{label}</span>
-                <input
-                  className="settings-input"
-                  type="number" min={1} max={180}
-                  value={presets[k]}
-                  onChange={(e) => setPresets({ ...presets, [k]: parseInt(e.target.value) || 1 })}
-                />
+                <PresetField value={settings.presets[k]} onCommit={(n) => setPreset(k, n)} />
               </div>
             ))}
             <div className="settings-row" style={{ marginTop: 8 }}>
@@ -419,7 +455,7 @@ export const SettingsPanel: React.FC<Props> = ({ onClose }) => {
               On, a sequence rolls straight into the next step. Off, it waits paused
               so you can choose when to begin.
             </div>
-            <button className="export-btn" style={{ marginTop: 8 }} onClick={saveSettings}>Save Presets</button>
+            <div className="settings-hint">Changes apply right away.</div>
           </div>
         )}
 
@@ -539,8 +575,6 @@ export const SettingsPanel: React.FC<Props> = ({ onClose }) => {
               style={{ display: 'none' }}
               onChange={handleToneUpload}
             />
-
-            <button className="export-btn" style={{ marginTop: 12 }} onClick={saveSettings}>Save Sound</button>
           </div>
         )}
 

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { getCircadianHour, type CircadianHour } from '../utils/circadian';
-import { useTimerStore, MAX_CONCURRENT_TIMERS } from '../store/timerStore';
+import { getCircadianHour, suggestedPresets, type CircadianHour } from '../utils/circadian';
+import { useTimerStore, MAX_CONCURRENT_TIMERS, presetKind } from '../store/timerStore';
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -21,11 +21,17 @@ export const RightNowBlock: React.FC = () => {
   }, []);
 
   const handleStartSuggested = async () => {
+    // A rest-hour suggestion ("eat something", "walk") isn't focus time, so it
+    // shouldn't inflate the Focus stat — same test the suggested presets use.
+    const presets = suggestedPresets(new Date().getHours());
+    const isRest = hour.quality === 'rest'
+      || (presets.length > 0 && presets.every((k) => presetKind(k) === 'break'));
     await startTimer({
       name: hour.phase,
       totalSeconds: hour.timerHint * 60,
       soundType: defaultSound,
       notificationMsg: `${hour.phase} block complete! ✨`,
+      kind: isRest ? 'break' : 'focus',
     });
     showToast(`Started ${hour.timerHint}m · ${hour.phase}`);
   };

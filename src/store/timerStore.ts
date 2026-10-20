@@ -31,7 +31,11 @@ export interface RustTimerState {
   sequence_total_steps?: number;
   /** Set when the phase ended via Skip rather than by running out of time. */
   skipped: boolean;
+  /** Work or rest — decides whether a completion counts toward focus stats. */
+  kind?: TimerKind;
 }
+
+export type TimerKind = 'focus' | 'break';
 
 export type StepKey = 'pomodoro' | 'shortBreak' | 'longBreak' | 'deepWork';
 
@@ -67,6 +71,7 @@ export interface ResolvedStep {
   seconds: number;
   sound: string;
   notification?: string;
+  kind?: TimerKind;
 }
 
 export interface ResolvedSequenceInput {
@@ -79,13 +84,40 @@ export interface ResolvedSequenceInput {
 export interface HistoryItem {
   name: string;
   duration: number;
+  /** Epoch ms. Doubles as the item's identity — two completions never share a millisecond. */
   completedAt: number;
+  /** Missing on entries logged before kinds existed — see isFocusItem(). */
+  kind?: TimerKind;
+  /** Optional "what did I work on?" note, added from the Activity tab. */
+  note?: string;
+}
+
+/**
+ * Whether a history entry counts as focus time. Older entries have no kind, so
+ * fall back to the name — every built-in break is called "… Break" or "Rest".
+ */
+export function isFocusItem(item: HistoryItem): boolean {
+  if (item.kind) return item.kind === 'focus';
+  return !/\b(break|rest)\b/i.test(item.name);
 }
 
 export interface Stats {
   lastActiveDate: string | null;
   streak: number;
-  pomodoroCount: number;
+}
+
+/**
+ * The streak as of today. The stored value is only updated when a timer
+ * completes, so after a missed day it would otherwise keep showing the old
+ * streak until the next completion reset it.
+ */
+export function currentStreak(stats: Stats, now = new Date()): number {
+  if (!stats.lastActiveDate) return 0;
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const alive = stats.lastActiveDate === now.toDateString()
+    || stats.lastActiveDate === yesterday.toDateString();
+  return alive ? stats.streak : 0;
 }
 
 export interface Sequence {
@@ -103,7 +135,6 @@ export interface Settings {
     deepWork: number;
     writing: number;
     planning: number;
-    deep: number;
   };
   volume: number;
   soundEnabled: boolean;
@@ -134,6 +165,13 @@ const STEP_SOUNDS: Record<StepKey, string> = {
   longBreak:  'water',
 };
 
+export type PresetKey = keyof Settings['presets'];
+
+/** Which presets are rest rather than work. Everything else counts as focus. */
+export function presetKind(key: PresetKey): TimerKind {
+  return key === 'shortBreak' || key === 'longBreak' ? 'break' : 'focus';
+}
+
 /** Duration of a saved step in seconds — preset steps read the current settings. */
 export function sequenceStepSeconds(step: SequenceStep, settings: Settings): number {
   if (isCustomStep(step)) return Math.max(1, Math.round(step.seconds));
@@ -161,6 +199,9 @@ export function resolveSequenceSteps(sequence: Sequence, settings: Settings): Re
         ? step.sound ?? settings.defaultSound
         : STEP_SOUNDS[step],
       notification: `${label} complete!`,
+      kind: isCustomStep(step)
+        ? (step.type === 'break' || step.type === 'transition' ? 'break' : 'focus')
+        : presetKind(step),
     }];
   });
 }
@@ -214,6 +255,7 @@ interface TimerStore {
     totalSeconds: number;
     soundType?: string;
     notificationMsg?: string;
+    kind?: TimerKind;
   }) => Promise<void>;
   startSequence: (sequence: Sequence) => Promise<void>;
   /** Start a sequence whose steps already carry explicit durations and tones. */
@@ -235,6 +277,8 @@ interface TimerStore {
   // ── Legacy timer actions (for history/settings parts of the app) ──
   updateTimerSound: (id: string, soundType: string) => Promise<void>;
   addHistory: (item: HistoryItem) => void;
+  /** Set or clear the note on the history entry completed at `completedAt`. */
+  updateHistoryNote: (completedAt: number, note: string) => void;
   updateStats: (stats: Partial<Stats>) => void;
   setSequences: (seqs: Sequence[]) => void;
   setSettings: (settings: Settings) => void;
@@ -261,7 +305,7 @@ interface TimerStore {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
-  presets: { pomodoro: 25, shortBreak: 5, longBreak: 15, deepWork: 52, writing: 42, planning: 26, deep: 60 },
+  presets: { pomodoro: 25, shortBreak: 5, longBreak: 15, deepWork: 52, writing: 42, planning: 26 },
   volume: 70,
   soundEnabled: true,
   notificationsEnabled: true,
@@ -350,7 +394,7 @@ export const useTimerStore = create<TimerStore>((set, get) => ({
 
   // Persisted state
   history: [],
-  stats: { lastActiveDate: null, streak: 0, pomodoroCount: 0 },
+  stats: { lastActiveDate: null, streak: 0 },
   sequences: [],
   settings: DEFAULT_SETTINGS,
   customSounds: [],
@@ -365,7 +409,7 @@ export const useTimerStore = create<TimerStore>((set, get) => ({
   // Every engine call adopts the state the engine returns rather than guessing
   // locally, so the UI can never drift out of sync with the authoritative timer.
 
-  startTimer: async ({ id, name, totalSeconds, soundType, notificationMsg }) => {
+  startTimer: async ({ id, name, totalSeconds, soundType, notificationMsg, kind }) => {
     const { settings } = get();
     const slotId = id ?? crypto.randomUUID();
     delete lastCompletedIdBySlot[slotId];
@@ -376,6 +420,7 @@ export const useTimerStore = create<TimerStore>((set, get) => ({
         totalSeconds,
         soundType: soundType ?? settings.defaultSound,
         notificationMsg: notificationMsg ?? `${name} complete!`,
+        kind: kind ?? 'focus',
       });
       set((s) => ({ timers: { ...s.timers, [slotKeyOf(timer)]: timer } }));
     } catch (e) {
@@ -499,6 +544,7 @@ export const useTimerStore = create<TimerStore>((set, get) => ({
         name: timerState.name,
         duration: timerState.total_seconds,
         completedAt: Date.now(),
+        kind: timerState.kind ?? 'focus',
       };
       get().addHistory(historyItem);
 
@@ -506,7 +552,7 @@ export const useTimerStore = create<TimerStore>((set, get) => ({
       const today = new Date().toDateString();
       const yesterday = new Date();
       yesterday.setDate(yesterday.getDate() - 1);
-      let { streak, pomodoroCount } = stats;
+      let { streak } = stats;
       if (stats.lastActiveDate !== today) {
         if (stats.lastActiveDate === yesterday.toDateString()) {
           streak++;
@@ -514,10 +560,7 @@ export const useTimerStore = create<TimerStore>((set, get) => ({
           streak = 1;
         }
       }
-      if (timerState.name.includes('Pomodoro') || timerState.name.includes('Deep Work')) {
-        pomodoroCount++;
-      }
-      get().updateStats({ lastActiveDate: today, streak, pomodoroCount });
+      get().updateStats({ lastActiveDate: today, streak });
     }
 
     // If this was a sequence step, hand control back to the engine. Passing the
@@ -599,6 +642,16 @@ export const useTimerStore = create<TimerStore>((set, get) => ({
       const history = [...s.history, item].slice(-100);
       return { history };
     }),
+
+  updateHistoryNote: (completedAt, note) =>
+    set((s) => ({
+      history: s.history.map((item) => {
+        if (item.completedAt !== completedAt) return item;
+        const next: HistoryItem = { ...item, note: note.trim() };
+        if (!next.note) delete next.note;
+        return next;
+      }),
+    })),
 
   updateStats: (partial) =>
     set((s) => ({ stats: { ...s.stats, ...partial } })),

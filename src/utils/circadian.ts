@@ -6,6 +6,8 @@
 //   icon, phase, quality, suggestion, timerHint  ← SLOTS (most complete)
 //   shortMsg                                      ← CIRCADIAN_PATTERNS[hour].msg
 
+import type { PresetKey } from '../store/timerStore';
+
 export type CircadianQuality = 'high' | 'medium' | 'low' | 'rest';
 
 export interface CircadianHour {
@@ -47,4 +49,33 @@ export const CIRCADIAN_HOURS: Record<number, CircadianHour> = {
 
 export function getCircadianHour(hour: number): CircadianHour {
   return CIRCADIAN_HOURS[hour] ?? CIRCADIAN_HOURS[9];
+}
+
+// Quick-start presets that fit each hour's suggestion above. These used to come
+// from a separate timeBlocks table with its own hour boundaries, so the glowing
+// presets could contradict the header (e.g. "post-lunch dip" next to a
+// highlighted Writing block). Keep them in step with CIRCADIAN_HOURS.
+const SUGGESTED_PRESETS: Record<number, PresetKey[]> = {
+  0:  ['shortBreak'],
+  1:  [], 2: [], 3: [],
+  4:  ['planning'],
+  5:  ['shortBreak'],
+  6:  ['planning'],
+  7:  ['planning', 'writing'],
+  8:  ['pomodoro'],
+  9:  ['deepWork'], 10: ['deepWork'], 11: ['deepWork'],
+  12: ['longBreak'],
+  13: ['shortBreak'],
+  14: ['pomodoro'],
+  15: ['pomodoro', 'planning'],
+  16: ['deepWork', 'writing'], 17: ['deepWork', 'writing'],
+  18: ['planning', 'writing'],
+  19: ['writing'],
+  20: ['shortBreak', 'planning'],
+  21: ['longBreak'],
+  22: [], 23: [],
+};
+
+export function suggestedPresets(hour: number): PresetKey[] {
+  return SUGGESTED_PRESETS[hour] ?? [];
 }
